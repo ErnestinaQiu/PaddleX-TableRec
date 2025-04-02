@@ -49,5 +49,6 @@ def merge_config(config, opts):
                 if idx == len(sub_keys) - 2:
                     cur[sub_key] = value
                 else:
-                    cur = cur[sub_key]
+                    if sub_key in cur.keys():
+                        cur = cur[sub_key]
     return config
