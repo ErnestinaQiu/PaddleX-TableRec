@@ -5,7 +5,7 @@ description: get ocr result from PaddleOCR repos
 import os
 import cv2
 import numpy as np
-from logging import DEBUG
+from logging import DEBUG, ERROR
 from typing import Any, List, Optional
 from paddlex import create_pipeline
 from paddlex.utils.logging import logging
@@ -14,14 +14,14 @@ from paddlex.utils.logging import logging
 class TableOCR:
     def __init__(
         self,
-        logger_flag=DEBUG,
+        logger_flag=ERROR,
     ) -> None:
         """an ocr and its postprocess for table
 
         Returns:
             _type_: _description_
         """
-        self.logger_flag = DEBUG
+        self.logger_flag = logger_flag
         self.pipeline = create_pipeline(pipeline="OCR")
 
     def get_ocr_text_box(self, img_path: str = None, save_dir: str = None):
@@ -161,9 +161,26 @@ class TableOCR:
         if len(detail['margin']) == 1 and len(detail['line']) == 0:
             raise ValueError('box_img is margin.')
 
-        if 
 
-        return shrink_boxes
+        hor_main_scope = [0, 0]
+        hor_main_scope_len = 0
+
+        if len(detail['line']) > 0:
+            for n in range(len(detail['line'])):
+                line = detail['line'][n]
+                if n == 0 and line[0] != 0:
+                    hor_main_scope = [0, line[0] - 1]
+                    hor_main_scope_len = line[0] - 1
+                elif n != 0:
+                    if detail['line'][n][0] - 1 - (detail['line'][n-1][1] + 1) > hor_main_scope_len:
+                        hor_main_scope = [detail['line'][n-1][1] + 1, detail['line'][n][0] - 1]
+                        hor_main_scope_len = detail['line'][n][0] - 1 - (detail['line'][n-1][1] + 1)
+
+        if hor_main_scope == [0, 0]:
+            hor_main_scope = [0, box_img.shape[1]]
+        shrink_box = box_img[ver_main_scope[0]:ver_main_scope[1], hor_main_scope[0]:hor_main_scope[1]]
+
+        return shrink_box
 
     def get_img_ocr_result(self, img_path: str = None, save_dir: str = None):
         assert os.path.exists(img_path), "img_path don't exist."
