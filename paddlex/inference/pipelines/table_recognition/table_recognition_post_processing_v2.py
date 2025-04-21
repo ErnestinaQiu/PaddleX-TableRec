@@ -265,6 +265,7 @@ def sort_table_cells_boxes(boxes):
 
     Returns:
         sorted_boxes (list of lists): The list of bounding boxes sorted.
+        flag (list of int): The start index of the ith row
     """
 
     boxes_sorted_by_y = sorted(boxes, key=lambda box: box[1])

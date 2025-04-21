@@ -2,7 +2,7 @@ Global:
   model: SLANet
   mode: check_dataset # check_dataset/train/evaluate/predict
   dataset_dir: "/paddle/dataset/paddlex/table_rec/table_rec_dataset_examples"
-  device: gpu:0,1,2,3
+  device: gpu:0
   output: "output"
 
 CheckDataset:

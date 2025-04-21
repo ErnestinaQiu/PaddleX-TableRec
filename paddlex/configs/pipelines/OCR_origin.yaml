@@ -3,14 +3,14 @@ pipeline_name: OCR
 
 text_type: general
 
-use_doc_preprocessor: False
-use_textline_orientation: False
+use_doc_preprocessor: True
+use_textline_orientation: True
 
 SubPipelines:
   DocPreprocessor:
     pipeline_name: doc_preprocessor
-    use_doc_orientation_classify: False
-    use_doc_unwarping: False
+    use_doc_orientation_classify: True
+    use_doc_unwarping: True
     SubModules:
       DocOrientationClassify:
         module_name: doc_text_orientation
@@ -24,12 +24,12 @@ SubPipelines:
 SubModules:
   TextDetection:
     module_name: text_detection
-    model_name: PP-OCRv4_server_det
+    model_name: PP-OCRv4_mobile_det
     model_dir: null
     limit_side_len: 960
     limit_type: max
     thresh: 0.3
-    box_thresh: 0.4
+    box_thresh: 0.6
     unclip_ratio: 2.0
   TextLineOrientation:
     module_name: textline_orientation
@@ -38,7 +38,7 @@ SubModules:
     batch_size: 6    
   TextRecognition:
     module_name: text_recognition
-    model_name: PP-OCRv4_server_rec_doc
+    model_name: PP-OCRv4_mobile_rec 
     model_dir: null
     batch_size: 6
     score_thresh: 0.0
