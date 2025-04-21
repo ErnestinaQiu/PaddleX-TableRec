@@ -136,8 +136,9 @@ class TableOCR:
         for k in range(vertical_shrink_box.shape[1]):
             if horizontal_accum[k] < line_thresh:
                 if margin_st != -1:
-                    detail['margin'].append([margin_st, k - 1])
-                    margins.append(k - 1 - margin_st)
+                    if k - 1 - margin_st > 0:
+                        detail['margin'].append([margin_st, k - 1])
+                        margins.append(k - 1 - margin_st)
                     margin_st = -1
                 if line_st == -1:
                     line_st = k
@@ -152,39 +153,17 @@ class TableOCR:
                     detail['line'].append([line_st, k - 1])
                     line_st = -1
                 if margin_st != -1:
-                    detail['margin'].append([margin_st, k - 1])
-                    margins.append(k - 1 - margin_st)
+                    if k - 1 - margin_st > 0:
+                        detail['margin'].append([margin_st, k - 1])
+                        margins.append(k - 1 - margin_st)
                     margin_st = -1
 
         if len(detail['margin']) == 1 and len(detail['line']) == 0:
             raise ValueError('box_img is margin.')
 
-        fixed_margin_thresh = np.mean(margins)
+        if 
 
-        hor_main_scope_len = 0
-        hor_main_scope = [0, 0]
-        text_line_st = -1
-        j = 0
-        while j < len(detail['margin']):
-            if j == 0:
-                text_line_st = detail['margin'][j][1]
-                j += 1
-                continue
-            if detail['margin'][j][1] - detail['margin'][j][0] > fixed_margin_thresh:
-                if text_line_st != -1:
-                    text_line_ed = detail['margin'][j][0]
-                    if text_line_ed - text_line_st > hor_main_scope_len:
-                        hor_main_scope = [text_line_st, text_line_ed]
-                else:
-                    text_line_st = detail['margin'][j][1]
-            j += 1
-
-        if self.logger_flag == DEBUG:
-            print(f'hor_main_scope: {hor_main_scope}, detail: {detail}')
-
-        shrink_box = box_img[ver_main_scope[0]:ver_main_scope[1], hor_main_scope[0]: hor_main_scope[1]]
-
-        return shrink_box
+        return shrink_boxes
 
     def get_img_ocr_result(self, img_path: str = None, save_dir: str = None):
         assert os.path.exists(img_path), "img_path don't exist."
