@@ -25,20 +25,28 @@ class TableOCR:
         self.pipeline = create_pipeline(pipeline="OCR")
 
     def get_ocr_text_box(self, img_path: str = None, save_dir: str = None):
-        save_dir = os.path.join(save_dir, 'ocr_text_box')
-        os.makedirs(save_dir, exist_ok=True)
         img_name = os.path.basename(img_path).split('.')[0]
+        save_dir = os.path.join(save_dir, 'ocr_text_box', img_name)
+        os.makedirs(save_dir, exist_ok=True)
         ocr_res = self.get_img_ocr_result(img_path=img_path, save_dir=save_dir)
         ocr_res_json = ocr_res._to_json()['res']
         rec_boxes = ocr_res_json['rec_boxes']
         img = self.check_and_read_img(img_path=img_path)
         for i in range(len(rec_boxes)):
+            if self.logger_flag == DEBUG:
+                print('-'*10, i, '-'*10)
             box = rec_boxes[i]
             box_img = self.get_box_img(box=box, img=img)
+            assert box_img.shape[0] != 0 and box_img.shape[1] != 0, f'box_img is empty, img_path: {img_path}'
+            shrink_box_img = self.shrink_text_box(box_img=box_img)
+            assert shrink_box_img.shape[0] != 0 and shrink_box_img.shape[1] != 0, f'shrink_box_img is empty, img_path: {img_path}'
+            if self.logger_flag == DEBUG:
+                self.show_img(img=box_img)
+                self.show_img(img=shrink_box_img)
             if save_dir:
                 box_img_name = '.'.join(['_'.join([img_name, str(i)]), 'jpg'])
                 box_img_path = os.path.join(save_dir, box_img_name)
-                cv2.imwrite(box_img_path, box_img)
+                cv2.imwrite(box_img_path, shrink_box_img)
 
     def show_img(self, img: np.ndarray):
         cv2.imshow('Image', img)
@@ -66,7 +74,7 @@ class TableOCR:
         margin_thresh = 0.95 * box_img.shape[1]
 
         if self.logger_flag == DEBUG:
-            print(f'line_thresh: {line_thresh}, margin_thresh: {margin_thresh}')
+            print(f'--- ver \nline_thresh: {line_thresh}, margin_thresh: {margin_thresh}')
 
         _, binary_image = cv2.threshold(box_img, 127, 1, cv2.THRESH_BINARY)
 
@@ -102,8 +110,11 @@ class TableOCR:
                     detail['margin'].append([margin_st, k - 1])
                     margin_st = -1
 
+        if margin_st != -1:
+            detail['margin'].append([margin_st, binary_image.shape[0]-1])          
+
         if len(detail['margin']) == 1 and len(detail['line']) == 0:
-            raise ValueError('box_img is margin.')
+            return box_img
 
         ver_main_scope_len = 0
         ver_main_scope = [0, 0]
@@ -115,8 +126,10 @@ class TableOCR:
                 ver_main_scope = [text_line_st, text_line_ed]
 
         if self.logger_flag == DEBUG:
-            print(f'ver_main_scope: {ver_main_scope}, detail: {detail}')
+            print(f'ver_main_scope: {ver_main_scope}, \ndetail: {detail}')
 
+        if ver_main_scope == [0, 0]:
+            ver_main_scope = [0, binary_image.shape[0]]
         vertical_shrink_box = binary_image[ver_main_scope[0]: ver_main_scope[1], :]
 
         # horizontal analysis
@@ -127,7 +140,7 @@ class TableOCR:
             horizontal_accum.append(np.sum(vertical_shrink_box[:, i]))
 
         if self.logger_flag == DEBUG:
-            print(f'line_thresh: {line_thresh}, margin_thresh: {margin_thresh}\nhorizontal_accum: {horizontal_accum}')
+            print(f'--- hor  \nline_thresh: {line_thresh}, margin_thresh: {margin_thresh}\nhorizontal_accum: {horizontal_accum}')
 
         detail = {'margin': [], 'line': []}
         margins = []
@@ -150,7 +163,6 @@ class TableOCR:
                     margin_st = k
             else:
                 if line_st != -1:
-                    detail['line'].append([line_st, k - 1])
                     line_st = -1
                 if margin_st != -1:
                     if k - 1 - margin_st > 0:
@@ -158,8 +170,11 @@ class TableOCR:
                         margins.append(k - 1 - margin_st)
                     margin_st = -1
 
+        if self.logger_flag == DEBUG:
+            print(f'detail: {detail}')
+
         if len(detail['margin']) == 1 and len(detail['line']) == 0:
-            raise ValueError('box_img is margin.')
+            return box_img[ver_main_scope[0]:ver_main_scope[1], :]
 
 
         hor_main_scope = [0, 0]
@@ -178,6 +193,7 @@ class TableOCR:
 
         if hor_main_scope == [0, 0]:
             hor_main_scope = [0, box_img.shape[1]]
+        
         shrink_box = box_img[ver_main_scope[0]:ver_main_scope[1], hor_main_scope[0]:hor_main_scope[1]]
 
         return shrink_box
@@ -193,7 +209,6 @@ class TableOCR:
         for res in output:
             if save_dir:
                 img_name = os.path.basename(img_path)
-                save_dir = os.path.join(save_dir, img_name)
                 os.makedirs(save_dir, exist_ok=True)
                 img_sp = os.path.join(save_dir, img_name)
                 json_sp = os.path.join(save_dir, ".".join([img_name, 'json']))
@@ -201,4 +216,3 @@ class TableOCR:
                 res.save_to_json(json_sp)
 
         return res
-    

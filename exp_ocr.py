@@ -32,6 +32,13 @@ def test_my_ocr(img_path, save_dir=None):
     ocr_res = table_ocr.get_ocr_text_box(img_path=img_path, save_dir=save_dir)
     return ocr_res
 
+def test_my_ocr_img_dir(img_dir, save_dir=None):
+    table_ocr = TableOCR()
+    for img_name in os.listdir(img_dir):
+        img_path = os.path.join(img_dir, img_name)
+        ocr_res = table_ocr.get_ocr_text_box(img_path=img_path, save_dir=save_dir)
+    return ocr_res
+
 def test_shrink_box():
     img_path = 'D:/work/TableRec/PaddleX-TableRec/output/exp/ocr_text_box/border_bottom_18_M2YV6IY0NXGYQQURBAVT_39.jpg'
     table_ocr = TableOCR()
@@ -42,8 +49,11 @@ def test_shrink_box():
 
 if __name__ == "__main__":
     save_dir = "./output/exp"
-    img_path = os.path.join('D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images', 'border_bottom_18_M2YV6IY0NXGYQQURBAVT.jpg')
+    img_dir = os.path.join('D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images')
+    # img_path = os.path.join('D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images', 'border_bottom_18_M2YV6IY0NXGYQQURBAVT.jpg')
     # ocr_res = test_ocr(img_path=img_path)
     # ocr_res = test_ocr_pipeline(img_path=img_path, save_dir=save_dir)
+    # img_path = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images/border_bottom_0_8CTA75BO6N49PDO4WLJD.jpg'
     # test_my_ocr(img_path=img_path, save_dir=save_dir)
-    test_shrink_box()
+    test_my_ocr_img_dir(img_dir=img_dir, save_dir=save_dir)
+    # test_shrink_box()
