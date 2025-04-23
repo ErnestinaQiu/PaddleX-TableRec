@@ -8,45 +8,63 @@ import numpy as np
 from logging import DEBUG, ERROR
 from typing import Any, List, Optional
 from paddlex import create_pipeline
-from paddlex.utils.logging import logging
+from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
 
 
 class TableOCR:
     def __init__(
         self,
-        logger_flag=ERROR,
+        log_level=ERROR,
+        log_file='./output/exp/logs/debug.log'
     ) -> None:
         """an ocr and its postprocess for table
 
         Returns:
             _type_: _description_
         """
-        self.logger_flag = logger_flag
+        self.logger_flag = log_level
+        self.logger = get_logger(name='ocrtable', log_file=log_file, log_level=log_level)
         self.pipeline = create_pipeline(pipeline="OCR")
 
-    def get_ocr_text_box(self, img_path: str = None, save_dir: str = None):
+    def get_ocr_text_boxes(self, img_path: str = None, save_dir: str = None):
+        """_summary_
+
+        Args:
+            img_path (str, optional): image path. Defaults to None.
+            save_dir (str, optional): directory to save. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
         img_name = os.path.basename(img_path).split('.')[0]
-        save_dir = os.path.join(save_dir, 'ocr_text_box', img_name)
-        os.makedirs(save_dir, exist_ok=True)
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, 'ocr_text_box', img_name)
+            os.makedirs(save_dir, exist_ok=True)
         ocr_res = self.get_img_ocr_result(img_path=img_path, save_dir=save_dir)
         ocr_res_json = ocr_res._to_json()['res']
         rec_boxes = ocr_res_json['rec_boxes']
         img = self.check_and_read_img(img_path=img_path)
+        shrink_boxes = []
         for i in range(len(rec_boxes)):
             if self.logger_flag == DEBUG:
-                print('-'*10, i, '-'*10)
+                self.logger.debug(" ".join(['-'*10, str(i), '-'*10]))
             box = rec_boxes[i]
             box_img = self.get_box_img(box=box, img=img)
             assert box_img.shape[0] != 0 and box_img.shape[1] != 0, f'box_img is empty, img_path: {img_path}'
-            shrink_box_img = self.shrink_text_box(box_img=box_img)
+            shrink_box_img, shrink_box = self.shrink_text_box(box_img=box_img, origin_box=box)
             assert shrink_box_img.shape[0] != 0 and shrink_box_img.shape[1] != 0, f'shrink_box_img is empty, img_path: {img_path}'
+            shrink_boxes.append(shrink_box)
             if self.logger_flag == DEBUG:
                 self.show_img(img=box_img)
                 self.show_img(img=shrink_box_img)
             if save_dir:
                 box_img_name = '.'.join(['_'.join([img_name, str(i)]), 'jpg'])
                 box_img_path = os.path.join(save_dir, box_img_name)
-                cv2.imwrite(box_img_path, shrink_box_img)
+                if os.path.exists(box_img_path):
+                    pass
+                else:
+                    cv2.imwrite(box_img_path, shrink_box_img)
+        return shrink_boxes
 
     def show_img(self, img: np.ndarray):
         cv2.imshow('Image', img)
@@ -56,6 +74,15 @@ class TableOCR:
         cv2.destroyAllWindows()
 
     def get_box_img(self, box: List, img: np.ndarray):
+        """_summary_
+
+        Args:
+            box (List): [x0, y0, x1, y1]
+            img (np.ndarray): image matrix array
+
+        Returns:
+            _type_: _description_
+        """
         box_img = img[box[1]:box[3], box[0]:box[2]]
         return box_img
 
@@ -64,17 +91,23 @@ class TableOCR:
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         return img
 
-    def shrink_text_box(self, box_img):
+    def shrink_text_box(self, box_img: np.ndarray, origin_box: List):
         """only consider the table line is vertical or horizontal
 
         Args:
-            box_img (_type_): _description_
+            box_img (np.ndarray): img
+            origin_box (List): [x0, y0, x1, y1]
+        Returns:
+            shrink_box_img (np.ndarray): img after shrink
+            shrink_box (List): [x, y, w, h]
+
         """
         line_thresh = 0.05 * box_img.shape[1]
         margin_thresh = 0.95 * box_img.shape[1]
 
         if self.logger_flag == DEBUG:
-            print(f'--- ver \nline_thresh: {line_thresh}, margin_thresh: {margin_thresh}')
+            self.logger.debug(f'origin_box: {origin_box}')
+            self.logger.debug(f'--- ver \nline_thresh: {line_thresh}, margin_thresh: {margin_thresh}')
 
         _, binary_image = cv2.threshold(box_img, 127, 1, cv2.THRESH_BINARY)
 
@@ -84,7 +117,7 @@ class TableOCR:
             vertical_accum.append(np.sum(binary_image[i, :]))
 
         if self.logger_flag == DEBUG:
-            print(f'vertical_accum: {vertical_accum}')
+            self.logger.debug(f'vertical_accum: {vertical_accum}')
 
         detail = {'margin': [], 'line': []}
         margin_st = -1
@@ -114,7 +147,7 @@ class TableOCR:
             detail['margin'].append([margin_st, binary_image.shape[0]-1])          
 
         if len(detail['margin']) == 1 and len(detail['line']) == 0:
-            return box_img
+            return box_img, [origin_box[0], origin_box[1], origin_box[2] - origin_box[0], origin_box[3] - origin_box[1]]
 
         ver_main_scope_len = 0
         ver_main_scope = [0, 0]
@@ -126,7 +159,7 @@ class TableOCR:
                 ver_main_scope = [text_line_st, text_line_ed]
 
         if self.logger_flag == DEBUG:
-            print(f'ver_main_scope: {ver_main_scope}, \ndetail: {detail}')
+            self.logger.debug(f'ver_main_scope: {ver_main_scope}, \ndetail: {detail}')
 
         if ver_main_scope == [0, 0]:
             ver_main_scope = [0, binary_image.shape[0]]
@@ -140,7 +173,7 @@ class TableOCR:
             horizontal_accum.append(np.sum(vertical_shrink_box[:, i]))
 
         if self.logger_flag == DEBUG:
-            print(f'--- hor  \nline_thresh: {line_thresh}, margin_thresh: {margin_thresh}\nhorizontal_accum: {horizontal_accum}')
+            self.logger.debug(f'--- hor  \nline_thresh: {line_thresh}, margin_thresh: {margin_thresh}\nhorizontal_accum: {horizontal_accum}')
 
         detail = {'margin': [], 'line': []}
         margins = []
@@ -171,11 +204,11 @@ class TableOCR:
                     margin_st = -1
 
         if self.logger_flag == DEBUG:
-            print(f'detail: {detail}')
+            self.logger.debug(f'detail: {detail}')
 
         if len(detail['margin']) == 1 and len(detail['line']) == 0:
-            return box_img[ver_main_scope[0]:ver_main_scope[1], :]
-
+            self.logger.debug(f'box_img.shape: {box_img.shape}, shrink_box: {[origin_box[0], origin_box[1] + ver_main_scope[0], origin_box[2], ver_main_scope[1] - ver_main_scope[0]]}')
+            return box_img[ver_main_scope[0]:ver_main_scope[1], :], [origin_box[0], origin_box[1] + ver_main_scope[0], origin_box[2] - origin_box[0], ver_main_scope[1] - ver_main_scope[0]]
 
         hor_main_scope = [0, 0]
         hor_main_scope_len = 0
@@ -193,10 +226,14 @@ class TableOCR:
 
         if hor_main_scope == [0, 0]:
             hor_main_scope = [0, box_img.shape[1]]
-        
-        shrink_box = box_img[ver_main_scope[0]:ver_main_scope[1], hor_main_scope[0]:hor_main_scope[1]]
 
-        return shrink_box
+        if self.logger_flag == DEBUG:
+            self.logger.debug(f'hor_main_scope: {hor_main_scope}')
+
+        shrink_img = box_img[ver_main_scope[0]:ver_main_scope[1], hor_main_scope[0]:hor_main_scope[1]]
+        shrink_box = [origin_box[0] + hor_main_scope[0], origin_box[1] + ver_main_scope[0], hor_main_scope[1] - hor_main_scope[0], ver_main_scope[1] - ver_main_scope[0]]
+
+        return shrink_img, shrink_box
 
     def get_img_ocr_result(self, img_path: str = None, save_dir: str = None):
         assert os.path.exists(img_path), "img_path don't exist."
@@ -216,3 +253,23 @@ class TableOCR:
                 res.save_to_json(json_sp)
 
         return res
+
+    def box_to_four_coordinates(self, box: List):
+        """transform box from [x, y, w, h] to four points, x is vertical axis, and y is horizontal axis
+
+        Args:
+            box (list): [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        """
+        origin_x, origin_y, w, h = box
+        pts = [(origin_x, origin_y), (origin_x + w, origin_y), (origin_x + w, origin_y + h), (origin_x, origin_y + h)]
+        return pts
+
+    def transform_ocr_box_into_four_coordinates(self, ocr_box: List):
+        """_summary_
+
+        Args:
+            ocr_box (List): [x0, y0, x1, y1]
+        """
+        x0, y0, x1, y1 = ocr_box
+        pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        return pts
