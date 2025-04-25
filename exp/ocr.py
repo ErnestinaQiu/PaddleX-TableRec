@@ -5,8 +5,8 @@ description: get ocr result from PaddleOCR repos
 import os
 import cv2
 import numpy as np
-from logging import DEBUG, ERROR
-from typing import Any, List, Optional
+from logging import NOTSET, DEBUG, ERROR
+from typing import Any, List, Optional, Tuple
 from paddlex import create_pipeline
 from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
 
@@ -54,7 +54,7 @@ class TableOCR:
             shrink_box_img, shrink_box = self.shrink_text_box(box_img=box_img, origin_box=box)
             assert shrink_box_img.shape[0] != 0 and shrink_box_img.shape[1] != 0, f'shrink_box_img is empty, img_path: {img_path}'
             shrink_boxes.append(shrink_box)
-            if self.logger_flag == DEBUG:
+            if self.logger_flag == NOTSET:
                 self.show_img(img=box_img)
                 self.show_img(img=shrink_box_img)
             if save_dir:
@@ -66,12 +66,16 @@ class TableOCR:
                     cv2.imwrite(box_img_path, shrink_box_img)
         return shrink_boxes
 
-    def show_img(self, img: np.ndarray):
+    def show_img(self, img: np.ndarray, sp: str = None):
         cv2.imshow('Image', img)
 
         # Wait for a key press and then close all windows
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        if self.logger_flag == NOTSET:
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        if sp:
+            cv2.imwrite(sp, img)
+
 
     def get_box_img(self, box: List, img: np.ndarray):
         """_summary_
@@ -90,8 +94,8 @@ class TableOCR:
         assert os.path.exists(img_path), "img_path doesn't exists"
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         return img
-
     def shrink_text_box(self, box_img: np.ndarray, origin_box: List):
+
         """only consider the table line is vertical or horizontal
 
         Args:
@@ -259,6 +263,8 @@ class TableOCR:
 
         Args:
             box (list): [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        Returns:
+            pts (list): four points of polygon
         """
         origin_x, origin_y, w, h = box
         pts = [(origin_x, origin_y), (origin_x + w, origin_y), (origin_x + w, origin_y + h), (origin_x, origin_y + h)]
@@ -269,7 +275,100 @@ class TableOCR:
 
         Args:
             ocr_box (List): [x0, y0, x1, y1]
+        Returns:
+            pts (List): four points of ocr box
         """
         x0, y0, x1, y1 = ocr_box
         pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
         return pts
+
+    def ocr_box_canvas(self, text_boxes: List, img_shape: Tuple):
+        """draw text boxes in a canvas
+
+        Args:
+            text_boxes (List): [x, y, width, height]
+            img_shape (Tuple): img.shape
+        Returns:
+            canvas (np.ndarray): blank matrix with text box as 1
+        """
+        canvas = np.zeros(img_shape)
+        if self.logger_flag <= DEBUG:
+            vis_blank_canvas = np.zeros(img_shape)
+        for box in text_boxes:
+            x, y, w, h = box
+            canvas[y:y+h, x:x+w] = 1
+            if self.logger_flag == DEBUG:
+                vis_blank_canvas[y:y+h, x:x+w] = 255
+        if self.logger_flag <= DEBUG:
+            self.show_img(img=vis_blank_canvas)
+        self.logger.debug(f'canvas.shape: {canvas.shape}')
+        return canvas
+
+    def analysis_canvas(self, canvas: np.ndarray, save_dir: str=None):
+        import matplotlib.pyplot as plt
+
+        row_projection = []
+        for i in range(canvas.shape[0]):
+            row_projection.append(np.sum(canvas[i, :]))
+
+        row_inds = [int(ind) for ind in range(canvas.shape[0])]
+
+        plt.figure(figsize=(8, 6))
+        plt.bar(row_inds, row_projection, color='skyblue')
+        plt.title('row_projection')
+        plt.xlabel('row index')
+        plt.ylabel('pixel sum')
+
+        if save_dir is not None:
+            row_sp = os.path.join(save_dir, 'row_proj.png')
+            plt.savefig(row_sp, dpi=300)
+        else:
+            plt.show()
+            plt.close()
+
+        col_projection = []
+        for j in range(canvas.shape[1]):
+            col_projection.append(np.sum(canvas[:, j]))
+
+        col_inds = [ind for ind in range(canvas.shape[1])]
+
+        plt.figure(figsize=(8, 6))
+        plt.bar(col_inds, col_projection, color='skyblue')
+        plt.title('col_projection')
+        plt.xlabel('col index')
+        plt.ylabel('pixel sum')
+
+        if save_dir is not None:
+            col_sp = os.path.join(save_dir, 'col_proj.png')
+            plt.savefig(col_sp, dpi=300)
+        else:
+            plt.show()
+            plt.close()
+
+    def split_into_row_subgraph(self, canvas):
+        """ split text boxes into rows
+
+        Args:
+            canvas (np.ndarray): blank matrix with text box as 1
+        Returns:
+            box_groups (List): list of group of text boxes
+        """
+        row_proj = []
+        for i in range(canvas.shape[0]):
+            row_proj.append(np.sum(canvas[i, :]))
+
+        # for j in range(canvas.shape[0]):
+            
+
+        pass
+
+    def split_into_column_subgraph(self):
+        """ split text boxes into rows
+        """
+
+        pass
+
+    def split_into_cell_subgraph(self):
+        """ split text boxes into cells
+        """
+        pass

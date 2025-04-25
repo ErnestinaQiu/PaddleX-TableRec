@@ -44,6 +44,7 @@ def test_my_ocr(img_path, save_dir=None):
     table_ocr.show_img(origin_table)
 
     res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+
     res_pts_list = []
     for i in range(len(res_boxes)):
         # if i != 3:
@@ -55,9 +56,52 @@ def test_my_ocr(img_path, save_dir=None):
         # tmp_vis_img = draw_tables(img=img, boxes=[res_pts])
         # table_ocr.show_img(tmp_vis_img)
 
+
     vis_img = draw_tables(img=img, boxes=res_pts_list)
     table_ocr.show_img(vis_img)
+
     return res_pts_list
+
+def test_split_into_groups(img_path, save_dir=None):
+    # img save dir
+    if save_dir is not None:
+        img_name = os.path.basename(img_path).split('.')[0]
+
+        img_dir = os.path.join(save_dir, 'proj_analysis', img_name)
+        os.makedirs(img_dir, exist_ok=True)
+    else:
+        img_dir = None
+
+    table_ocr = TableOCR()
+
+    img = table_ocr.check_and_read_img(img_path=img_path)
+    # origin img
+    ocr_res = table_ocr.get_img_ocr_result(img_path=img_path)
+    ocr_res_json = ocr_res._to_json()['res']
+    origin_rec_boxes = ocr_res_json['rec_boxes']
+    rec_boxes = []
+    for rec_box in origin_rec_boxes:
+        rec_boxes.append(table_ocr.transform_ocr_box_into_four_coordinates(ocr_box=rec_box))
+    origin_table = draw_tables(img=img, boxes=rec_boxes)
+
+    if save_dir is not None:
+        sp = os.path.join(img_dir, 'table_ocr_img.png')
+    else:
+        sp = None
+    table_ocr.show_img(origin_table, sp=sp)
+
+    res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+    canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
+
+    if save_dir is not None:
+        canvas_sp = os.path.join(img_dir, 'table_ocr_text_boxes.png')
+    else:
+        canvas_sp = None
+    canvas = canvas * 255
+    table_ocr.show_img(canvas, sp=canvas_sp)
+
+    table_ocr.analysis_canvas(canvas=canvas, save_dir=img_dir)
 
 def test_my_ocr_img_dir(img_dir, save_dir=None):
     table_ocr = TableOCR()
@@ -98,7 +142,8 @@ if __name__ == "__main__":
     # ocr_res = test_ocr(img_path=img_path)
     # ocr_res = test_ocr_pipeline(img_path=img_path, save_dir=save_dir)
     img_path = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images/border_bottom_0_8CTA75BO6N49PDO4WLJD.jpg'
-    
-    test_my_ocr(img_path=img_path, save_dir=save_dir)
+
+    # test_my_ocr(img_path=img_path, save_dir=save_dir)
     # test_my_ocr_img_dir(img_dir=img_dir, save_dir=save_dir)
     # test_shrink_box()
+    test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_groups'))
