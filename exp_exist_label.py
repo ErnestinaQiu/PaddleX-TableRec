@@ -14,7 +14,16 @@ import PIL
 from PIL import Image, ImageDraw, ImageFont
 
 
-def draw_tables(img, boxes):
+def draw_tables(img: np.ndarray, boxes: list):
+    """_summary_
+
+    Args:
+        img (np.ndarray): img matrix
+        boxes (list): four points
+
+    Returns:
+        _type_: _description_
+    """
     image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     h, w = image.height, image.width
     img_top = image.copy()

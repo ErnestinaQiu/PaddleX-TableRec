@@ -103,6 +103,8 @@ def test_split_into_groups(img_path, save_dir=None):
 
     table_ocr.analysis_canvas(canvas=canvas, save_dir=img_dir)
 
+    table_ocr.split_into_subgraph(canvas=canvas, text_boxes=res_boxes, img=img)
+
 def test_my_ocr_img_dir(img_dir, save_dir=None):
     table_ocr = TableOCR()
     table_boxes_img_dir = os.path.join(save_dir, 'shrink_boxes')

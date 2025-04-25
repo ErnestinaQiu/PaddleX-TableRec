@@ -3,7 +3,10 @@ author: ErnestinaQiu
 description: get ocr result from PaddleOCR repos
 """
 import os
+import gc
 import cv2
+import random
+from copy import deepcopy
 import numpy as np
 from logging import NOTSET, DEBUG, ERROR
 from typing import Any, List, Optional, Tuple
@@ -14,7 +17,7 @@ from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
 class TableOCR:
     def __init__(
         self,
-        log_level=ERROR,
+        log_level=DEBUG,
         log_file='./output/exp/logs/debug.log'
     ) -> None:
         """an ocr and its postprocess for table
@@ -70,11 +73,11 @@ class TableOCR:
         cv2.imshow('Image', img)
 
         # Wait for a key press and then close all windows
-        if self.logger_flag == NOTSET:
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         if sp:
             cv2.imwrite(sp, img)
+        return 0
 
     def get_box_img(self, box: List, img: np.ndarray):
         """_summary_
@@ -93,6 +96,7 @@ class TableOCR:
         assert os.path.exists(img_path), "img_path doesn't exists"
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         return img
+
     def shrink_text_box(self, box_img: np.ndarray, origin_box: List):
 
         """only consider the table line is vertical or horizontal
@@ -261,7 +265,7 @@ class TableOCR:
         """transform box from [x, y, w, h] to four points, x is vertical axis, and y is horizontal axis
 
         Args:
-            box (list): [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            box (list): [x, y, w, h]
         Returns:
             pts (list): four points of polygon
         """
@@ -344,12 +348,13 @@ class TableOCR:
             plt.show()
             plt.close()
 
-    def split_into_subgraph(self, canvas, text_boxes):
+    def split_into_subgraph(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None):
         """ split text boxes into subgraphs
 
         Args:
             canvas (np.ndarray): blank matrix with text box as 1
-            text_boxes (np.ndarray): the small text boxes, [[x, y, w, h], ...]
+            text_boxes (List): the small text boxes, [[x, y, w, h], ...]
+            img (np.ndarray): for debug
         Returns:
             box_groups (List): list of group of text boxes
         """
@@ -366,6 +371,9 @@ class TableOCR:
             elif row_proj[j] == 0 and row_st != -1:
                 row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': []}
                 row_st = -1
+
+        if row_st != -1:
+            row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, canvas.shape[0] - 1], 'text_boxes': []}
 
         col_proj = []
         for k in range(canvas.shape[1]):
@@ -390,9 +398,103 @@ class TableOCR:
             for m in range(len(col_subgraphs)):
                 subgraph_scope = col_subgraphs[str(m)]['scope']
                 if x >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
-                    row_subgraphs[str(m)]['text_boxes'].append(box)
+                    col_subgraphs[str(m)]['text_boxes'].append(box)
 
         subgraphs = {'row': row_subgraphs, 'col': col_subgraphs}
 
+        if self.logger_flag == DEBUG and img is not None:
+            from PIL import Image, ImageDraw, ImageFont
+            # row
+            i = 0
+            row_subgraph_canvas = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            row_img = row_subgraph_canvas.copy()
+            random.seed(0)
+            draw_row_img = ImageDraw.Draw(row_img)
+
+            for i in range(len(row_subgraphs)):
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                scope = row_subgraphs[str(i)]['scope']
+                scope_pts = self.box_to_four_coordinates(box=[0, scope[0], img.shape[1], scope[1] - scope[0]])
+                draw_row_img.polygon(scope_pts, fill=color)
+
+                text_boxes = row_subgraphs[str(i)]['text_boxes']
+                j = 0
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                for j in range(len(text_boxes)):
+                    box = text_boxes[j]
+                    pts = self.box_to_four_coordinates(box=box)
+                    draw_row_img.polygon(pts, fill=color)
+
+            row_img = np.array(Image.blend(row_subgraph_canvas, row_img, 0.5))
+            self.show_img(img=row_img)
+            self.logger.debug('finish row')
+            del row_img
+            del row_subgraph_canvas
+            gc.collect()
+
+            # col
+            i = 0
+            col_subgraphs_canvas = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            col_img = col_subgraphs_canvas.copy()
+            draw_col_img = ImageDraw.Draw(col_img)
+
+            for i in range(len(col_subgraphs)):
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                scope = col_subgraphs[str(i)]['scope']
+                scope_pts = self.box_to_four_coordinates(box=[scope[0], 0, scope[1] - scope[0], img.shape[0]])
+                draw_col_img.polygon(scope_pts, fill=color)
+
+                text_boxes = col_subgraphs[str(i)]['text_boxes']
+                j = 0
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                for j in range(len(text_boxes)):
+                    box = text_boxes[j]
+                    pts = self.box_to_four_coordinates(box=box)
+                    draw_col_img.polygon(pts, fill=color)
+
+            col_img = np.array(Image.blend(col_subgraphs_canvas, col_img, 0.5))
+            self.show_img(img=col_img)
+            gc.collect()
+            self.logger.debug('finish column')
+
         return subgraphs
 
+    def draw_boxes(self, img: np.ndarray, boxes: List, color_mode: str = 'random', color: Tuple= None):
+        """tool for debug
+
+        Args:
+            img (np.ndarray): the canvas image
+            boxes (List): [x, y, w, h]
+            color_mode (str): can be 'random' or 'same'.
+
+        Returns:
+            img (np.ndarray): the img with text boxes colored as expected
+        """
+        img = img.astype(np.uint8)
+        from PIL import Image, ImageDraw, ImageFont
+        if len(img.shape) == 3:
+            image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        elif len(img.shape) == 2:
+            image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_GRAY2RGB))
+        else:
+            raise ValueError(f'img.shape: {img.shape} not supported')
+
+        h, w = image.height, image.width
+        img_top = image.copy()
+        img_bottom = cv2.cvtColor(np.ones((h, w, 3), dtype=np.uint8) * 255, cv2.COLOR_BGR2RGB)
+        random.seed(0)
+
+        draw_top = ImageDraw.Draw(img_top)
+        if color_mode == 'same' and color is None:
+            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        for box in boxes:
+            if color_mode == "random":
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            draw_top.polygon(box, fill=color)
+            pts = np.array(box, np.int32).reshape((-1, 1, 2))
+            cv2.polylines(img_bottom, [pts], True, color, 1)
+        img_top = Image.blend(image, img_top, 0.5)
+        img_show = Image.new("RGB", (w, h * 2), (255, 255, 255))
+        img_show.paste(img_top, (0, 0, w, h))
+        img_show.paste(Image.fromarray(img_bottom), (0, h, w, h  * 2))
+        return np.array(img_show)
