@@ -76,7 +76,6 @@ class TableOCR:
         if sp:
             cv2.imwrite(sp, img)
 
-
     def get_box_img(self, box: List, img: np.ndarray):
         """_summary_
 
@@ -345,11 +344,12 @@ class TableOCR:
             plt.show()
             plt.close()
 
-    def split_into_row_subgraph(self, canvas):
-        """ split text boxes into rows
+    def split_into_subgraph(self, canvas, text_boxes):
+        """ split text boxes into subgraphs
 
         Args:
             canvas (np.ndarray): blank matrix with text box as 1
+            text_boxes (np.ndarray): the small text boxes, [[x, y, w, h], ...]
         Returns:
             box_groups (List): list of group of text boxes
         """
@@ -357,18 +357,42 @@ class TableOCR:
         for i in range(canvas.shape[0]):
             row_proj.append(np.sum(canvas[i, :]))
 
-        # for j in range(canvas.shape[0]):
-            
+        row_subgraphs = {}
 
-        pass
+        row_st = -1
+        for j in range(canvas.shape[0]):
+            if row_proj[j] > 0 and row_st == -1:
+                row_st = j
+            elif row_proj[j] == 0 and row_st != -1:
+                row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': []}
+                row_st = -1
 
-    def split_into_column_subgraph(self):
-        """ split text boxes into rows
-        """
+        col_proj = []
+        for k in range(canvas.shape[1]):
+            col_proj.append(np.sum(canvas[:, k]))
 
-        pass
+        col_subgraphs = {}
 
-    def split_into_cell_subgraph(self):
-        """ split text boxes into cells
-        """
-        pass
+        col_st = -1
+        for q in range(canvas.shape[1]):
+            if col_proj[q] > 0 and col_st == -1:
+                col_st = q
+            elif col_proj[q] == 0 and col_st != -1:
+                col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, q - 1], 'text_boxes': []}
+                col_st = -1
+
+        for box in text_boxes:
+            x, y, w, h = box
+            for n in range(len(row_subgraphs)):
+                subgraph_scope = row_subgraphs[str(n)]['scope']
+                if y >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                    row_subgraphs[str(n)]['text_boxes'].append(box)
+            for m in range(len(col_subgraphs)):
+                subgraph_scope = col_subgraphs[str(m)]['scope']
+                if x >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                    row_subgraphs[str(m)]['text_boxes'].append(box)
+
+        subgraphs = {'row': row_subgraphs, 'col': col_subgraphs}
+
+        return subgraphs
+
