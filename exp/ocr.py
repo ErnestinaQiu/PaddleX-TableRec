@@ -18,16 +18,26 @@ class TableOCR:
     def __init__(
         self,
         log_level=DEBUG,
-        log_file='./output/exp/logs/debug.log'
+        log_file='./output/exp/logs/debug.log',
+        platform='aistudio',
+        save_dir=None
     ) -> None:
         """an ocr and its postprocess for table
+        Args:
+            log_level (int, optional)
+            log_file (str, optional)
+            platform (str, optional)
+            save_dir (str, optional): default None
 
         Returns:
             _type_: _description_
         """
         self.logger_flag = log_level
+        self.platform = platform
         self.logger = get_logger(name='ocrtable', log_file=log_file, log_level=log_level)
         self.pipeline = create_pipeline(pipeline="OCR")
+        self.save_dir = save_dir
+        os.makedirs(self.save_dir, exist_ok=True)
 
     def get_ocr_text_boxes(self, img_path: str = None, save_dir: str = None):
         """_summary_
@@ -58,10 +68,18 @@ class TableOCR:
             assert shrink_box_img.shape[0] != 0 and shrink_box_img.shape[1] != 0, f'shrink_box_img is empty, img_path: {img_path}'
             shrink_boxes.append(shrink_box)
             if self.logger_flag == NOTSET:
-                self.show_img(img=box_img)
-                self.show_img(img=shrink_box_img)
-            if save_dir:
-                box_img_name = '.'.join(['_'.join([img_name, str(i)]), 'jpg'])
+                if self.save_dir:
+                    box_sp = os.path.join(self.save_dir, 'text_box.png')
+                    shrink_box_sp = os.path.join(self.save_dir, 'shrink_box.png')
+                else:
+                    box_sp = None
+                    shrink_box_sp = None
+                self.show_img(img=box_img, sp=box_sp)
+                self.show_img(img=shrink_box_img, sp=shrink_box_sp)
+            if save_dir or self.save_dir:
+                if save_dir is None:
+                    save_dir = self.save_dir
+                box_img_name = '.'.join(['_'.join([img_name, str(i)]), 'png'])
                 box_img_path = os.path.join(save_dir, box_img_name)
                 if os.path.exists(box_img_path):
                     pass
@@ -70,11 +88,13 @@ class TableOCR:
         return shrink_boxes
 
     def show_img(self, img: np.ndarray, sp: str = None):
-        cv2.imshow('Image', img)
+        if self.platform != 'aistudio':
+            cv2.imshow('Image', img)
 
         # Wait for a key press and then close all windows
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
         if sp:
             cv2.imwrite(sp, img)
         return 0
@@ -93,7 +113,7 @@ class TableOCR:
         return box_img
 
     def check_and_read_img(self, img_path: str):
-        assert os.path.exists(img_path), "img_path doesn't exists"
+        assert os.path.exists(img_path), f"img_path doesn't exists \n{img_path}"
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         return img
 
@@ -303,7 +323,11 @@ class TableOCR:
             if self.logger_flag == DEBUG:
                 vis_blank_canvas[y:y+h, x:x+w] = 255
         if self.logger_flag <= DEBUG:
-            self.show_img(img=vis_blank_canvas)
+            save_dir = self.save_dir
+            sp = None
+            if save_dir:
+                sp = os.path.join(save_dir, 'vis_blank_canvas.png')
+            self.show_img(img=vis_blank_canvas, sp=sp)
         self.logger.debug(f'canvas.shape: {canvas.shape}')
         return canvas
 
@@ -348,7 +372,7 @@ class TableOCR:
             plt.show()
             plt.close()
 
-    def split_into_subgraph(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None):
+    def split_into_subgraph(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None, iou_thresh=0.6):
         """ split text boxes into subgraphs
 
         Args:
@@ -395,10 +419,33 @@ class TableOCR:
                 subgraph_scope = row_subgraphs[str(n)]['scope']
                 if y >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
                     row_subgraphs[str(n)]['text_boxes'].append(box)
+                elif y + h <= subgraph_scope[0] or y >= subgraph_scope[1]:
+                    pass
+                else:
+                    if y >= subgraph_scope[0] and y < subgraph_scope[1] and y + h > subgraph_scope[1]:
+                        iou = round((subgraph_scope[1] - y)/h, 2)
+                    elif y < subgraph_scope[0] and y + h > subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                        iou = round((y+h-subgraph_scope[0])/h, 2)
+                    elif y <= subgraph_scope[0] and y + h >= subgraph_scope[1]:
+                        iou = round((subgraph_scope[1] - subgraph_scope[0])/h, 2)
+                    if iou >= iou_thresh:
+                        row_subgraphs[str(n)]['text_boxes'].append(box)
+
             for m in range(len(col_subgraphs)):
                 subgraph_scope = col_subgraphs[str(m)]['scope']
-                if x >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                if x >= subgraph_scope[0] and x + h <= subgraph_scope[1]:
                     col_subgraphs[str(m)]['text_boxes'].append(box)
+                elif x + h <= subgraph_scope[0] or x >= subgraph_scope[1]:
+                    pass
+                else:
+                    if x >= subgraph_scope[0] and x < subgraph_scope[1] and x + w > subgraph_scope[1]:
+                        iou = round((subgraph_scope[1] - x)/w, 2)
+                    elif x < subgraph_scope[0] and x + w > subgraph_scope[0] and x + w <= subgraph_scope[1]:
+                        iou = round((x+w-subgraph_scope[0])/w, 2)
+                    elif x <= subgraph_scope[0] and x + w > subgraph_scope[1]:
+                        iou = round((subgraph_scope[1] - subgraph_scope[0])/w, 2)
+                    if iou >= iou_thresh:
+                        col_subgraphs[str(m)]['text_boxes'].append(box)
 
         subgraphs = {'row': row_subgraphs, 'col': col_subgraphs}
 
@@ -426,7 +473,10 @@ class TableOCR:
                     draw_row_img.polygon(pts, fill=color)
 
             row_img = np.array(Image.blend(row_subgraph_canvas, row_img, 0.5))
-            self.show_img(img=row_img)
+            row_img_sp = None
+            if self.save_dir:
+                row_img_sp = os.path.join(self.save_dir, 'row_img.png')
+            self.show_img(img=row_img, sp=row_img_sp)
             self.logger.debug('finish row')
             del row_img
             del row_subgraph_canvas
@@ -453,7 +503,10 @@ class TableOCR:
                     draw_col_img.polygon(pts, fill=color)
 
             col_img = np.array(Image.blend(col_subgraphs_canvas, col_img, 0.5))
-            self.show_img(img=col_img)
+            col_img_sp = None
+            if self.save_dir:
+                col_img_sp = os.path.join(self.save_dir, 'col_img.png')
+            self.show_img(img=col_img, sp=col_img_sp)
             gc.collect()
             self.logger.debug('finish column')
 

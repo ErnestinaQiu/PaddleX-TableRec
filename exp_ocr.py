@@ -62,7 +62,7 @@ def test_my_ocr(img_path, save_dir=None):
 
     return res_pts_list
 
-def test_split_into_groups(img_path, save_dir=None):
+def test_split_into_groups(img_path, platform, save_dir=None):
     # img save dir
     if save_dir is not None:
         img_name = os.path.basename(img_path).split('.')[0]
@@ -72,8 +72,7 @@ def test_split_into_groups(img_path, save_dir=None):
     else:
         img_dir = None
 
-    table_ocr = TableOCR()
-
+    table_ocr = TableOCR(platform=platform, save_dir=img_dir)
     img = table_ocr.check_and_read_img(img_path=img_path)
     # origin img
     ocr_res = table_ocr.get_img_ocr_result(img_path=img_path)
@@ -138,14 +137,22 @@ def draw_shrink_box_img_dir(img_dir, save_dir):
     return ocr_res
 
 if __name__ == "__main__":
+    mode = 'aistudio'  # 'pc' or 'aistudio'
     save_dir = "./output/exp"
-    # img_dir = os.path.join('D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images')
-    # img_path = os.path.join('D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images', 'border_bottom_18_M2YV6IY0NXGYQQURBAVT.jpg')
+
+    if mode == 'pc':
+        data_dir = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless'
+    elif mode == 'aistudio':
+        data_dir = './data/dataset'
+
+    # img_dir = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images')
+    # img_path = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images', 'border_bottom_18_M2YV6IY0NXGYQQURBAVT.jpg')
     # ocr_res = test_ocr(img_path=img_path)
     # ocr_res = test_ocr_pipeline(img_path=img_path, save_dir=save_dir)
-    img_path = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets/images/border_bottom_0_8CTA75BO6N49PDO4WLJD.jpg'
+
+    img_path = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images/border_bottom_0_8CTA75BO6N49PDO4WLJD.jpg')
 
     # test_my_ocr(img_path=img_path, save_dir=save_dir)
     # test_my_ocr_img_dir(img_dir=img_dir, save_dir=save_dir)
     # test_shrink_box()
-    test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_groups'))
+    test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_groups'), platform='aistudio')
