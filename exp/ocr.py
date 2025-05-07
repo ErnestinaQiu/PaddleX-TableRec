@@ -8,7 +8,7 @@ import cv2
 import random
 from copy import deepcopy
 import numpy as np
-from logging import NOTSET, DEBUG, ERROR
+from logging import NOTSET, DEBUG, INFO, ERROR
 from typing import Any, List, Optional, Tuple
 from paddlex import create_pipeline
 from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
@@ -36,6 +36,9 @@ class TableOCR:
         self.platform = platform
         self.logger = get_logger(name='ocrtable', log_file=log_file, log_level=log_level)
         self.pipeline = create_pipeline(pipeline="OCR")
+        self.logger.info(dir(self.pipeline))
+        self.logger.info(dir(self.pipeline.text_det_model))
+        self.logger.info(dir(self.pipeline.text_rec_model))
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
@@ -65,9 +68,9 @@ class TableOCR:
             box_img = self.get_box_img(box=box, img=img)
             assert box_img.shape[0] != 0 and box_img.shape[1] != 0, f'box_img is empty, img_path: {img_path}'
             shrink_box_img, shrink_box = self.shrink_text_box(box_img=box_img, origin_box=box)
-            assert shrink_box_img.shape[0] != 0 and shrink_box_img.shape[1] != 0, f'shrink_box_img is empty, img_path: {img_path}'
-            shrink_boxes.append(shrink_box)
+
             if self.logger_flag == NOTSET:
+                shrink_box_img = img[shrink_box[1]: shrink_box[1] + shrink_box[3], shrink_box[0]: shrink_box[0] + shrink_box[2]]
                 if self.save_dir:
                     box_sp = os.path.join(self.save_dir, 'text_box.png')
                     shrink_box_sp = os.path.join(self.save_dir, 'shrink_box.png')
@@ -77,6 +80,9 @@ class TableOCR:
                 self.show_img(img=box_img, sp=box_sp)
                 self.show_img(img=shrink_box_img, sp=shrink_box_sp)
             if save_dir or self.save_dir:
+                shrink_box_img = img[shrink_box[1]: shrink_box[1] + shrink_box[3], shrink_box[0]: shrink_box[0] + shrink_box[2]]
+                assert shrink_box_img.shape[0] != 0 and shrink_box_img.shape[1] != 0, f'shrink_box_img is empty, img_path: {img_path}'
+
                 if save_dir is None:
                     save_dir = self.save_dir
                 box_img_name = '.'.join(['_'.join([img_name, str(i)]), 'png'])
@@ -85,6 +91,30 @@ class TableOCR:
                     pass
                 else:
                     cv2.imwrite(box_img_path, shrink_box_img)
+
+            # shrink_boxes.append(shrink_box)
+
+            new_shrink_boxes, new_box_imgs = self.modify_text_boxes(text_box=shrink_box, box_img=shrink_box_img)
+            
+            for k in range(len(new_shrink_boxes)):
+                tmp_box = new_shrink_boxes[k]
+                shrink_boxes.append(tmp_box)
+                if save_dir or self.save_dir:
+                    tmp_box_img = img[tmp_box[1]: tmp_box[1] + tmp_box[3], tmp_box[0]: tmp_box[0] + tmp_box[2]]
+                    assert tmp_box_img != [], f'rec_boxes {i}, new_shrink_boxes {k}, tmp_box_img: {tmp_box_img}, tmp_box: {tmp_box}, img.shape: {img.shape}'
+                    if save_dir is None:
+                        save_dir = self.save_dir
+                    box_img_name = '.'.join(['_'.join([img_name, str(i), 'modified', str(k)]), 'png'])
+                    box_img_path = os.path.join(save_dir, box_img_name)
+                    if os.path.exists(box_img_path):
+                        pass
+                    else:
+                        try:
+                            cv2.imwrite(box_img_path, tmp_box_img)
+                        except Exception as e:
+                            self.logger.debug(f'tmp_box_img: {tmp_box_img}, tmp_box: {tmp_box}, img.shape: {img.shape}')
+                            raise e
+
         return shrink_boxes
 
     def show_img(self, img: np.ndarray, sp: str = None):
@@ -511,6 +541,74 @@ class TableOCR:
             self.logger.debug('finish column')
 
         return subgraphs
+
+    def modify_text_boxes(self, text_box: List, box_img: np.ndarray):
+        """correct the results of ocr det model 
+        
+        Args:
+            text_boxes (List): the text boxes,  [x, y, w, h]
+            box_img (np.ndarray): the text box image
+        Returns:
+            new_text_boxes (List): the text boxes
+            new_box_img (np.ndarray): the binary image
+        """
+        _, bin_box_img = cv2.threshold(box_img, 127, 1, cv2.THRESH_BINARY)
+        bin_box_img = 1 - bin_box_img
+        x, y, w, h = text_box
+        hor_proj = []
+        for i in range(bin_box_img.shape[1]):
+            hor_proj.append(np.sum(bin_box_img[:, i]))
+        
+        margins = []
+        st = -1
+        for j in range(len(hor_proj)):
+            if j == 0 and hor_proj[j] == 0:
+                continue
+            if hor_proj[j] == 0 and hor_proj[j-1] != 0:
+                st = j
+            elif hor_proj[j] != 0 and st != -1 and j - 1 - st > 0:
+                margins.append({'scope': [st, j - 1], 'length': j - 1 - st})
+                st = -1
+
+        if len(margins) <= 3:
+            return [text_box], [box_img]
+
+        median_thresh = np.percentile([_d['length'] for _d in margins], 90)
+        split_pts = []
+        for k in margins:
+            if k['length'] > median_thresh:
+                split_pts.append(int((k['scope'][1] + k['scope'][0])/2))
+        
+        self.logger.debug(f'----- modify text box -----\nhor_proj: {hor_proj}\nmargins: {margins}\nmedian_thresh: {median_thresh}\nsplit_pts:{split_pts}')
+
+        if len(split_pts) == 0:
+            return [text_box], [box_img]
+
+        new_st = x
+        new_text_boxes = []
+        new_box_imgs = []
+        for n in range(len(split_pts)):
+            if n == 0:
+                new_text_boxes.append([new_st, y, split_pts[n], h])
+                tmp_box_img = box_img[0:h, new_st-x:new_st-x+split_pts[n]]
+                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+split_pts[n]]: [0:{h}, {new_st-x}:{new_st-x+split_pts[n]}], box_img: {box_img.shape}, split_pts: {split_pts}, n: {n}'
+            elif n!= 0:
+                new_text_boxes.append([new_st, y, split_pts[n] - split_pts[n-1], h])
+                tmp_box_img = box_img[0:h, new_st-x:new_st-x+split_pts[n] - split_pts[n-1]]
+                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+split_pts[n] - split_pts[n-1]]: [0:{h}, {new_st-x}:{new_st-x+split_pts[n] - split_pts[n-1]}], box_img: {box_img.shape}, split_pts: {split_pts}, n: {n}'
+
+            new_box_imgs.append(tmp_box_img)
+            new_st = x + split_pts[n]
+
+        if new_st != len(hor_proj) - 1:
+            new_text_boxes.append([new_st, y, x + w - new_st, h])
+            tmp_box_img = box_img[0:h, new_st-x: w]
+            assert tmp_box_img != [], f'[0:h, new_st-x: w]: [0:{h}, {new_st-x}: {w}], box_img: {box_img.shape}, new_st: {new_st}, w: {w}'
+            new_box_imgs.append(tmp_box_img)
+
+        self.logger.debug(f'new_text_boxes: {new_text_boxes}')
+
+        return new_text_boxes, new_box_imgs
 
     def draw_boxes(self, img: np.ndarray, boxes: List, color_mode: str = 'random', color: Tuple= None):
         """tool for debug

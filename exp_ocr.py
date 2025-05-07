@@ -91,6 +91,18 @@ def test_split_into_groups(img_path, platform, save_dir=None):
 
     res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
 
+    res_pts_poly = []
+    for _box in res_boxes:
+        __box = table_ocr.box_to_four_coordinates(_box)
+        res_pts_poly.append(__box)
+    mod_shrinked_table = draw_tables(img=img, boxes=res_pts_poly)
+
+    if save_dir is not None:
+        sp = os.path.join(img_dir, 'table_ocr_mod_shrinked_img.png')
+    else:
+        sp = None
+    table_ocr.show_img(mod_shrinked_table, sp=sp)
+
     canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
 
     if save_dir is not None:
@@ -137,8 +149,12 @@ def draw_shrink_box_img_dir(img_dir, save_dir):
     return ocr_res
 
 if __name__ == "__main__":
+    import shutil
     mode = 'aistudio'  # 'pc' or 'aistudio'
     save_dir = "./output/exp"
+
+    if os.path.exists(save_dir):
+        shutil.rmtree(save_dir)
 
     if mode == 'pc':
         data_dir = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless'
