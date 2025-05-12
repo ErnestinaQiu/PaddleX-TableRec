@@ -149,16 +149,15 @@ def draw_shrink_box_img_dir(img_dir, save_dir):
     return ocr_res
 
 if __name__ == "__main__":
-    import shutil
-    mode = 'aistudio'  # 'pc' or 'aistudio'
+    mode = 'pc'  # 'pc' or 'aistudio'
     save_dir = "./output/exp"
-
-    if os.path.exists(save_dir):
-        shutil.rmtree(save_dir)
 
     if mode == 'pc':
         data_dir = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless'
     elif mode == 'aistudio':
+        import shutil
+        if os.path.exists(save_dir):
+            shutil.rmtree(save_dir)
         data_dir = './data/dataset'
 
     # img_dir = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images')

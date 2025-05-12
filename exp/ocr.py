@@ -95,7 +95,7 @@ class TableOCR:
             # shrink_boxes.append(shrink_box)
 
             new_shrink_boxes, new_box_imgs = self.modify_text_boxes(text_box=shrink_box, box_img=shrink_box_img)
-            
+
             for k in range(len(new_shrink_boxes)):
                 tmp_box = new_shrink_boxes[k]
                 shrink_boxes.append(tmp_box)
@@ -544,7 +544,7 @@ class TableOCR:
 
     def modify_text_boxes(self, text_box: List, box_img: np.ndarray):
         """correct the results of ocr det model 
-        
+
         Args:
             text_boxes (List): the text boxes,  [x, y, w, h]
             box_img (np.ndarray): the text box image
@@ -558,7 +558,7 @@ class TableOCR:
         hor_proj = []
         for i in range(bin_box_img.shape[1]):
             hor_proj.append(np.sum(bin_box_img[:, i]))
-        
+
         margins = []
         st = -1
         for j in range(len(hor_proj)):
@@ -574,31 +574,31 @@ class TableOCR:
             return [text_box], [box_img]
 
         median_thresh = np.percentile([_d['length'] for _d in margins], 90)
-        split_pts = []
+        bonds = []
         for k in margins:
             if k['length'] > median_thresh:
-                split_pts.append(int((k['scope'][1] + k['scope'][0])/2))
-        
-        self.logger.debug(f'----- modify text box -----\nhor_proj: {hor_proj}\nmargins: {margins}\nmedian_thresh: {median_thresh}\nsplit_pts:{split_pts}')
+                bonds.append(k['scope'])
 
-        if len(split_pts) == 0:
+        self.logger.debug(f'----- modify text box -----\nhor_proj: {hor_proj}\nmargins: {margins}\nmedian_thresh: {median_thresh}\nbonds:{bonds}')
+
+        if len(bonds) == 0:
             return [text_box], [box_img]
 
         new_st = x
         new_text_boxes = []
         new_box_imgs = []
-        for n in range(len(split_pts)):
+        for n in range(len(bonds)):
             if n == 0:
-                new_text_boxes.append([new_st, y, split_pts[n], h])
-                tmp_box_img = box_img[0:h, new_st-x:new_st-x+split_pts[n]]
-                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+split_pts[n]]: [0:{h}, {new_st-x}:{new_st-x+split_pts[n]}], box_img: {box_img.shape}, split_pts: {split_pts}, n: {n}'
+                new_text_boxes.append([new_st, y, bonds[n][0], h])
+                tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]]
+                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0]]: [0:{h}, {new_st-x}:{new_st-x+ bonds[n][0]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
             elif n!= 0:
-                new_text_boxes.append([new_st, y, split_pts[n] - split_pts[n-1], h])
-                tmp_box_img = box_img[0:h, new_st-x:new_st-x+split_pts[n] - split_pts[n-1]]
-                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+split_pts[n] - split_pts[n-1]]: [0:{h}, {new_st-x}:{new_st-x+split_pts[n] - split_pts[n-1]}], box_img: {box_img.shape}, split_pts: {split_pts}, n: {n}'
+                new_text_boxes.append([new_st, y, bonds[n][0] - bonds[n-1][1], h])
+                tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][0]]
+                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][1]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0] - bonds[n-1][1]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
 
             new_box_imgs.append(tmp_box_img)
-            new_st = x + split_pts[n]
+            new_st = x + bonds[n][1]
 
         if new_st != len(hor_proj) - 1:
             new_text_boxes.append([new_st, y, x + w - new_st, h])
