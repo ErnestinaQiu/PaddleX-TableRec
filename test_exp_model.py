@@ -13,6 +13,7 @@ class TestModel:
         y = conv(x)
         print(y)
         print(y.shape)
+        print(dir(y))
 
 if __name__ == "__main__":
     test_model = TestModel()

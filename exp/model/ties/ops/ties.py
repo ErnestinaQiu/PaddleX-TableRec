@@ -2,6 +2,9 @@
 some operations for model
 author: ErnestinaQiu
 """
+import paddle
+from typing import List
+
 
 def gather_features_from_conv_head(conv_head, vertices_y, vertices_x, vertices_y2, vertices_x2, scale_y, scale_x):
     """Gather features from a 2D image.
@@ -18,4 +21,19 @@ def gather_features_from_conv_head(conv_head, vertices_y, vertices_x, vertices_y
         features (): the gathered features with shape [batch, max_vertices, channels]
     """
     # normalization
-    
+
+
+def edge_conv_layer(vertices_in: paddle.Tensor, num_neighbors: int = 30, mpl_layers: List = [64, 64, 64], aggregation_method : str = 'dim2_max', share_keyword=None, edge_activation=None):
+    """_summary_
+
+    Args:
+        vertices_in (paddle.Tensor)
+        num_neighbors (int, optional): _description_. Defaults to 30.
+        mpl_layers (list, optional): _description_. Defaults to [64, 64, 64].
+        aggregation_method (str, optional): _description_. Defaults to 'dim2_max'.
+        share_keyword (_type_, optional): _description_. Defaults to None.
+        edge_activation (_type_, optional): _description_. Defaults to None.
+    """
+    trans_space = vertices_in
+    indexing, _ = indexing_tensor(trans_space, num_neighbors)
+    # change indexing to be not self-referential
