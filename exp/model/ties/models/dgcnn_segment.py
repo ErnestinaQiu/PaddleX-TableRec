@@ -15,6 +15,7 @@ class Dgcnn(paddle.nn.Layer):
         x = self.bn(x)
         # global transform to 3D
         x = high_dim_dense(x, nodes=64)
+
         
 
         return 

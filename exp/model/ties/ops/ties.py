@@ -4,6 +4,7 @@ author: ErnestinaQiu
 """
 import paddle
 from typing import List
+from exp.model.ties.caloGraphNN import indexing_tensor
 
 
 def gather_features_from_conv_head(conv_head, vertices_y, vertices_x, vertices_y2, vertices_x2, scale_y, scale_x):
