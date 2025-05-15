@@ -4,6 +4,7 @@ author: ErnestinaQiu
 """
 import paddle
 from exp.model.ties.caloGraphNN import high_dim_dense
+from exp.model.ties.ops import edge_conv_layer
 
 
 class Dgcnn(paddle.nn.Layer):
@@ -16,6 +17,6 @@ class Dgcnn(paddle.nn.Layer):
         # global transform to 3D
         x = high_dim_dense(x, nodes=64)
 
-        
+        x = edge_conv_layer(x, 10, [64, 64, 64])
 
         return 

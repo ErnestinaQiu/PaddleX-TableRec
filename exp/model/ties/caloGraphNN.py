@@ -99,3 +99,16 @@ def high_dim_dense(inputs, nodes, **kwargs):
     if len(inputs.shape) == 5:
         con3d = paddle.nn.Conv3D(in_channels=inputs.shape[1], out_channels=nodes, kernel_size=(1, 1, 1), stride=(1, 1, 1), padding=0, **kwargs)
         return con3d(inputs)
+
+
+def layer_global_exchange(vertices_in):
+    trans_vertices_in = vertices_in
+
+    global_summed = paddle.mean(trans_vertices_in, axis=1, keepdim=True)
+
+    global_summed = paddle.tile(global_summed, [1, vertices_in.shape[1], 1])
+    vertices_out = paddle.concat([vertices_in, global_summed], axis=-1)
+
+    return vertices_out
+
+
