@@ -7,8 +7,10 @@ import numpy as np
 
 
 class BasicConvSegment(paddle.nn.Layer):
-    def __init__(self, name_scope= None, dtype="float32"):
+    def __init__(self, normalized_width: int, normalized_height: int, name_scope=None, dtype="float32"):
         super().__init__(name_scope, dtype)
+        self.normalized_width = normalized_width
+        self.normalized_height = normalized_height
         self.con2d_1 = paddle.nn.Conv2D(
             in_channels=1, out_channels=10, kernel_size=(3, 3), stride=1, padding=0, bias_attr=True
         )
@@ -17,6 +19,8 @@ class BasicConvSegment(paddle.nn.Layer):
         )
 
     def forward(self, x):
+        assert len(x.shape) == 4, "Input must be 4D."
+
         if isinstance(x, np.ndarray):
             x = paddle.to_tensor(x)
 

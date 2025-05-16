@@ -23,17 +23,39 @@ def gather_features_from_conv_head(conv_head, vertices_y, vertices_x, vertices_y
     """Gather features from a 2D image.
 
     Args:
-        conv_head (_type_): The 2D conv head with shape [batch, height, width, channels]
-        vertices_y (int): The y position of each of the vertex with shape [batch, max_vertices]
-        vertices_x (int): The x position of each of the vertex with shape [batch, max_vertices]
-        vertices_y2 (int): The height of each of the vertex with shape [batch, max_vertices]
-        vertices_x2 (int): The width of each of the feature with shape [batch, max_vertices]
-        scale_y (float): A scalar to show y_scale
-        scale_x (float): A scalar to show x_scale
+        conv_head (paddle.Tensor): the output from convolution network
+        vertices_y (paddle.Tensor): The y position of each of the vertex with shape [batch, max_vertices]
+        vertices_x (paddle.Tensor: The x position of each of the vertex with shape [batch, max_vertices]
+        vertices_y2 (paddle.Tensor): The height of each of the vertex with shape [batch, max_vertices]
+        vertices_x2 (paddle.Tensor): The width of each of the feature with shape [batch, max_vertices]
+        scale_y (paddle.Tensor): A scalar to show y_scale
+        scale_x (paddle.Tensor): A scalar to show x_scale
+
     Returns:
-        features (): the gathered features with shape [batch, max_vertices, channels]
+        The gathered features with shape [batch, max_vertices, channels]
     """
-    # normalization
+    vertices_y = paddle.cast(vertices_y, paddle.float32) * scale_y
+    vertices_x = paddle.cast(vertices_x, paddle.float32) * scale_x
+    vertices_y2 = paddle.cast(vertices_y2, paddle.float32) * scale_y
+    vertices_x2 = paddle.cast(vertices_x2, paddle.float32) * scale_x
+
+    batch_size, max_vertices = vertices_y.shape
+    batch_size, max_vertices = int(batch_size.value), int(max_vertices.value)
+
+    batch_range = paddle.arange(0, batch_size, dtype=paddle.float32).unsqueeze(-1).unsqueeze(-1)
+    # transform the dimension to fit max_vertices
+    batch_range = paddle.tile(batch_range, repeat_times=[1, max_vertices, 1])
+
+    mid_y = (vertices_y + vertices_y2) / 2.0
+    mid_x = (vertices_x + vertices_x2) / 2.0
+
+    mid_y = mid_y.unsqueeze(-1)
+    mid_x = mid_x.unsqueeze(-1)
+
+    indexing_tensor = paddle.concat([batch_range, mid_y, mid_x], axis=-1)
+    indexing_tensor = paddle.cast(indexing_tensor, paddle.int64)
+
+    return paddle.gather_nd(conv_head, indexing_tensor)
 
 
 def edge_conv_layer(vertices_in: paddle.Tensor, num_neighbors: int = 30, mpl_layers: List = [64, 64, 64], aggregation_method = paddle.max, share_keyword=None, edge_activation=None):
@@ -68,4 +90,3 @@ def edge_conv_layer(vertices_in: paddle.Tensor, num_neighbors: int = 30, mpl_lay
     vertex_out = aggregation_method(edge, axis=2)
 
     return vertex_out
-
