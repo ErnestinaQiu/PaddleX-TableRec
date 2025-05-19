@@ -20,18 +20,10 @@ class BasicConvSegment(paddle.nn.Layer):
 
     def forward(self, x):
         assert len(x.shape) == 4, "Input must be 4D."
+        assert x.shape[2] == self.normalized_height and x.shape[3] == self.normalized_width, f"Image shape must be [{self.normalized_height}, {self.normalized_width}], but got [{x.shape[2]}, {x.shape[3]}]"
 
         if isinstance(x, np.ndarray):
             x = paddle.to_tensor(x)
-
-        new_xs = []
-        for _x in x:
-            _x = _x.reshape((x.shape[1], x.shape[2], x.shape[3]))
-            new_x = paddle.vision.transforms.resize(_x, size=(256, 256))
-            new_xs.append(new_x)
-        x = np.array(new_xs)
-        x = paddle.to_tensor(x)
-        x = x.astype(dtype='float32')
 
         _graph_from_image = self.con2d_1(x)
         _graph_from_image = self.con2d_2(_graph_from_image)

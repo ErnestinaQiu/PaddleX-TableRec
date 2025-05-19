@@ -32,4 +32,4 @@ if __name__ == "__main__":
     test_model = TestModel()
     # test_model.test_conv_segment()
     # test_model.test_indexing_tensor()
-    test_model.test_high_dim_dense()
+    # test_model.test_high_dim_dense()

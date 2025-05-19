@@ -14,6 +14,8 @@ from exp.model.ties.ops.ties import gather_features_from_conv_head
 class BasicModel(nn.Layer):
     def __init__(self, config: Dict):
         # the following must be from config in the future version
+        self.max_vertices = 900
+
         self.normalized_width = 256
         self.normalized_height = 256
 
@@ -47,16 +49,18 @@ class BasicModel(nn.Layer):
         """
 
         Args:
-            x (dict): {"images": paddle.Tensor|numpy.ndarray, "text_boxes": list},
+            x (dict): {"images": paddle.Tensor|[b, c, h, w], "text_boxes": list|[[text boxes in one image], [...]], "text_words_length": list|[[text words length in one image]]},
                     images with shape as [batch, channel, width, height],
                     text_box as [x1, y1, x2, y2]
 
         Returns:
             probability (paddle.Tensor): the probability of the 
         """
-        assert len(x.shape) == 4, "Input must be 4D tensor."
         images = x['images']
-        b, c, w, h = images.shape
+        b, c, h, w = images.shape
+
+        assert len(images.shape) == 4, "Input images must be 4D tensor."
+        assert len(x['text_boxes']) == len(x['text_words_length']) == b, f"len(x['text_boxes']) != len(x['text_words_length']), len(x['text_boxes']): {len(x['text_boxes'])}, len(x['text_words_length']): {len(x['text_words_length'])}"
 
         text_boxes = x['text_boxes']
         vertices_y = []
@@ -89,10 +93,25 @@ class BasicModel(nn.Layer):
 
         gathered_image_features = gather_features_from_conv_head(conv_head, vertices_y, vertices_x,
                                                                  vertices_y2, vertices_x2, scale_y, scale_x)
+
+        _graph_vertex_features = paddle.zeros(shape=(b, self.max_vertices, self.num_vertex_features), dtype=paddle.float32)
+        words_length = x['text_words_length']
+        for i in range(b):
+            assert len(text_boxes[i]) == len(words_length[i]), f'len(text_boxes[{i}]) != len(words_length[{i}]) in batch {i}, len(text_boxes[{i}]): {len(text_boxes[i])}, len(words_length[{i}]): {len(words_length[i])}'
+            for j in range(len(text_boxes[i])):
+                x1, y1, x2, y2 = text_boxes[i][j]
+                word_length = words_length[i][j]
+                _graph_vertex_features[i, j, :4] = [x1, y1, x2, y2]
+                _graph_vertex_features[i, j, 4] = int(word_length)
+
+        vertices_combined_features = paddle.concat((_graph_vertex_features, gathered_image_features), axis=-1)
+
+        graph_features = self.graph_segment(vertices_combined_features)
+
         
 
         return
-
+    
 
     def set_conv_segment(self, conv_segment):
         self.conv_segment = conv_segment
