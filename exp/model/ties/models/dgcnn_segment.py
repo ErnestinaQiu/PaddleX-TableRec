@@ -12,6 +12,14 @@ class DgcnnSegment(paddle.nn.Layer):
         super().__init__(name_scope, dtype)
 
     def forward(self, x):
+        """get graph features
+
+        Args:
+            x (tensor): the cnn feature with shape (batch, channel, height - 12, width - 12)
+
+        Returns:
+            feat: graph feat
+        """
         self.bn = paddle.nn.BatchNorm2D(num_features=x.shape(1), momentum=0.8)
         feat = self.bn(x)
         # global transform to 3D

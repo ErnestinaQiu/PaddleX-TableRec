@@ -8,6 +8,7 @@ from paddle import nn
 
 from exp.model.ties.models.conv_segment import BasicConvSegment
 from exp.model.ties.models.dgcnn_segment import DgcnnSegment
+from exp.model.ties.models.edge_classfier import EdgeClassifier
 from exp.model.ties.ops.ties import gather_features_from_conv_head
 
 
@@ -44,6 +45,9 @@ class BasicModel(nn.Layer):
 
         self.conv_segment = BasicConvSegment(normalized_height=self.normalized_height, normalized_width=self.normalized_width)
         self.graph_segment = DgcnnSegment()
+        self.cell_clas_model = EdgeClassifier(dim_num_vertices=self.dim_num_vertices, max_vertices=self.max_vertices)
+        self.row_clas_model = EdgeClassifier(dim_num_vertices=self.dim_num_vertices, max_vertices=self.max_vertices)
+        self.col_clas_model = EdgeClassifier(dim_num_vertices=self.dim_num_vertices, max_vertices=self.max_vertices)
 
     def forward(self, x: Dict, **kwargs):
         """
@@ -108,10 +112,11 @@ class BasicModel(nn.Layer):
 
         graph_features = self.graph_segment(vertices_combined_features)
 
-        
+        cell_predicted_adj_matrix = self.cell_clas_model(graph_features)
+        row_predicted_adj_matrix = self.row_clas_model(graph_features)
+        col_predicted_adj_matrix = self.col_clas_model(graph_features)
 
-        return
-    
+        return {'cell_predicted_adj_matrix': cell_predicted_adj_matrix, 'row_predicted_adj_matrix': row_predicted_adj_matrix, 'col_predicted_adj_matrix': col_predicted_adj_matrix}
 
     def set_conv_segment(self, conv_segment):
         self.conv_segment = conv_segment

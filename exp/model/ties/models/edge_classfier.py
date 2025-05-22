@@ -8,18 +8,16 @@ from exp.model.ties.ops import edge_conv_layer, DenseLayer
 
 
 class EdgeClassifier(nn.Layer):
-    def __init__(self, config, name_scope=None, dtype="float32"):
+    def __init__(self, dim_num_vertices, max_vertices, name_scope=None, dtype="float32"):
         super().__init__(name_scope, dtype)
-        self.dim_num_vertices = config['dim_num_vertices']
-        self.max_vertices = config['max_vertices']
+        self.dim_num_vertices = dim_num_vertices
+        self.max_vertices = max_vertices
 
-    def forward(self, graph_features, gt_matrix, global_features, training=False, *inputs, **kwargs):
+    def forward(self, graph_features, training=False, *inputs, **kwargs):
         """_summary_
 
         Args:
-            graph_features (paddle.Tensor): From dgcnn segment network
-            gt_matrix (paddle.Tensor): with shape (num_batch, max_vertices, max_vertices)
-            global_features (paddle.Tensor): with shape (num_batch, num_global_features)
+            graph_features (paddle.Tensor): From dgcnn segment network, with shape (batch, )
         Returns:
 
         """
@@ -38,13 +36,6 @@ class EdgeClassifier(nn.Layer):
 
         self.dense2 = DenseLayer(input_dim=net.shape[1], output_dim=2)
         net = self.dense2(net)
-
-        num_features = global_features[:, self.dim_num_vertices]
-
-        # don't understand the use of the flowing mask
-        mask = F.sequence_mask(num_features, maxlen=self.max_vertices)
-        mask = paddle.unsqueeze(mask, axis=-1)
-        mask = paddle.cast(x=mask, dtype=paddle.float32)
 
         predicted_adj_matrix = paddle.argmax(net, axis=-1)
 
