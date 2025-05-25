@@ -15,33 +15,31 @@ from exp.model.ties.ops.ties import gather_features_from_conv_head
 class BasicModel(nn.Layer):
     def __init__(self, config: Dict):
         # the following must be from config in the future version
-        self.max_vertices = 900
+        self.max_vertices = config['max_vertices']
 
-        self.normalized_width = 256
-        self.normalized_height = 256
+        self.normalized_width = config['normalized_width']
+        self.normalized_height = config['normalized_height']
 
-        self.num_vertex_features = 5
-        self.image_height = 768
-        self.image_width = 1366
-        self.max_words_len = 30
-        self.num_batch = 30
-        self.num_global_features = 3
-        self.image_channels = 1
-        self.dim_vertex_x_position = 0
-        self.dim_vertex_y_position = 1
-        self.dim_vertex_x2_position = 2
-        self.dim_vertex_y2_position = 3
+        self.num_vertex_features = config['num_vertex_features']
+        self.image_height = config['image_height']
+        self.image_width = config['image_width']
+        self.max_words_len = config['max_words_len']
+        self.num_batch = config['num_batch']
+        self.num_global_features = config['num_global_features']
+        self.image_channels = config['image_channels']
+        self.dim_vertex_x_position = config['dim_vertex_x_position']
+        self.dim_vertex_y_position = config['dim_vertex_y_position']
+        self.dim_vertex_x2_position = config['dim_vertex_x2_position']
+        self.dim_vertex_y2_position = config['dim_vertex_y2_position']
 
-        self.dim_num_vertices = 2
-        self.samples_per_vertex = 6
-        self.variable_scope = 'basic_conv_graph_alpha_1'
-        self.learning_rate = 0.0001
+        self.dim_num_vertices = config['dim_num_vertices']
+        self.samples_per_vertex = config['samples_per_vertex']
+        self.variable_scope = config['variable_scope']
+        self.learning_rate = config['learning_rate']
 
-        self.is_sampling_balanced = 1
+        self.is_sampling_balanced = config['is_sampling_balanced']
 
-        self.visual_feedback_out_path = 150
-
-        self.momentum = 0.6
+        self.momentum = config['momentum']
 
         self.conv_segment = BasicConvSegment(normalized_height=self.normalized_height, normalized_width=self.normalized_width)
         self.graph_segment = DgcnnSegment()
@@ -55,7 +53,7 @@ class BasicModel(nn.Layer):
         Args:
             x (dict): {"images": paddle.Tensor|[b, c, h, w], "text_boxes": list|[[text boxes in one image], [...]], "text_words_length": list|[[text words length in one image]]},
                     images with shape as [batch, channel, width, height],
-                    text_box as [x1, y1, x2, y2]
+                    text_box with shape [x1, y1, x2, y2]
 
         Returns:
             probability (paddle.Tensor): the probability of the 
