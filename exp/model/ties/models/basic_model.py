@@ -51,7 +51,7 @@ class BasicModel(nn.Layer):
         """
 
         Args:
-            x (dict): {"images": paddle.Tensor|[b, c, h, w], "text_boxes": list|[[text boxes in one image], [...]], "text_words_length": list|[[text words length in one image]]},
+            x (dict): {"images": paddle.Tensor|[b, c, h, w], "text_boxes": list|[[text boxes in one image], [...]]},
                     images with shape as [batch, channel, width, height],
                     text_box with shape [x1, y1, x2, y2]
 
@@ -102,9 +102,7 @@ class BasicModel(nn.Layer):
             assert len(text_boxes[i]) == len(words_length[i]), f'len(text_boxes[{i}]) != len(words_length[{i}]) in batch {i}, len(text_boxes[{i}]): {len(text_boxes[i])}, len(words_length[{i}]): {len(words_length[i])}'
             for j in range(len(text_boxes[i])):
                 x1, y1, x2, y2 = text_boxes[i][j]
-                word_length = words_length[i][j]
                 _graph_vertex_features[i, j, :4] = [x1, y1, x2, y2]
-                _graph_vertex_features[i, j, 4] = int(word_length)
 
         vertices_combined_features = paddle.concat((_graph_vertex_features, gathered_image_features), axis=-1)
 
