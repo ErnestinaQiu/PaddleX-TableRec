@@ -114,8 +114,28 @@ class TiesDataSet(IterableDataset):
             new_text_boxes.append(new_poly_box)
         return new_img, new_text_boxes
 
+    def __getitem__(self, idx: int):
+        """return origin image and text boxes belong to the index
 
-    def __getitem__(self, idx):
+        Args:
+            idx (int): index of the train or val ds
 
-        return 
+        Returns:
+            tuple: images(np.ndarray) with shape (h, w, c) and text_boxes(list)
+        """
+        imgs_info, anns = self.get_info()
+        img_info = imgs_info[idx]
+        file_name = img_info['file_name']
+        img_id = img_info['id']
+        img_path = os.path.join(self.imgs_dir, file_name)
+        img = self.check_and_read(img_path=img_path)
+
+        boxes = []
+        for j in range(len(anns)):
+            ann = anns[j]
+            if ann['image_id'] != img_id:
+                continue
+            boxes.append(ann['bbox'])
+
+        return img, boxes
 
