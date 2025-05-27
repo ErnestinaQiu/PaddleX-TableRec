@@ -63,14 +63,15 @@ class TiesDataSet(IterableDataset):
 
             new_img, new_boxes = self.scale(img=img, text_boxes=boxes, target_width=self.normalized_width, target_height=self.normalized_height)
             new_img = np.transpose(new_img, (2, 0, 1))
-            new_img_tensor = paddle.ones(shape=(img.shape[2], self.normalized_height, self.normalized_width), dtype=paddle.float32) * 255
-            new_img_tensor[:, :new_img.shape[0], :new_img.shape[1]] = new_img
+            new_img_tensor = np.ones(shape=(img.shape[2], self.normalized_height, self.normalized_width)) * 255
+            new_img_tensor[:, :new_img.shape[1], :new_img.shape[2]] = new_img[:, :, :]
+
             images.append(new_img_tensor)
             text_boxes.append(new_boxes)
 
-        new_img_tensor = paddle.to_tensor(new_img_tensor, dtype=paddle.float32)
+        images = paddle.to_tensor(images, dtype=paddle.float32)
 
-        return {'images': new_img_tensor, 'text_boxes': text_boxes}
+        yield {'images': images, 'text_boxes': text_boxes}
 
     def check_and_read(self, img_path):
         assert os.path.exists(img_path), "file is not exists"
@@ -138,4 +139,3 @@ class TiesDataSet(IterableDataset):
             boxes.append(ann['bbox'])
 
         return img, boxes
-
