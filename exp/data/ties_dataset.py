@@ -3,12 +3,16 @@ generate the labels and get data for ties
 author: ErnestinaQiu
 """
 import os
+import gc
 import cv2
 import json
 import random
+import logging
 import numpy as np
 import paddle
 from paddle.io import IterableDataset
+from exp.ocr import TableOCR
+from exp_exist_label import draw_tables
 
 
 class TiesDataSet(IterableDataset):
@@ -26,6 +30,11 @@ class TiesDataSet(IterableDataset):
         self.normalized_height = config['normalized_height']
         self.normalized_width = config['normalized_width']
         self.seed = config['seed']
+        imgs_info, anns = self.get_info()
+        self.imgs_num = len(imgs_info)
+        del imgs_info
+        del anns
+        gc.collect()
 
     def get_info(self):
         with open(self.anns_path, 'r', encoding='utf8') as f:
@@ -39,21 +48,31 @@ class TiesDataSet(IterableDataset):
     def __iter__(self):
         """For model training
         Returns:
-            dict: {"images": paddle.Tensor|[b, c, h, w], "text_boxes": list|[[text boxes in one image], [...]]},
+            dict: {"images": paddle.Tensor|[b, c, h, w],
+                    "text_boxes": list|[[text boxes in one image], [...]],
+                    "cell_matrix": paddle.Tensor,
+                    "row_matrix": paddle.Tensor,
+                    "col_matrix": paddle.Tensor,
+                    }
                     images with shape as [batch, channel, width, height],
                     text_box with shape [x1, y1, x2, y2]
         """
         random.seed(self.seed)
+
+        table_ocr = TableOCR(log_level=logging.INFO, platform='pc')
+
         imgs_info, anns = self.get_info()
         images = []
-        text_boxes = []
+        cell_boxes = []
         for i in range(self.num_samples):
             chosen_img_info = imgs_info[random.choice(range(len(imgs_info)))]
             img_id = chosen_img_info['id']
             file_name = chosen_img_info['file_name']
             img_path = os.path.join(self.imgs_dir, file_name)
-            img = self.check_and_read(img_path=img_path)
 
+            res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+            img = self.check_and_read(img_path=img_path)
             boxes = []
             for j in range(len(anns)):
                 ann = anns[j]
@@ -61,17 +80,46 @@ class TiesDataSet(IterableDataset):
                     continue
                 boxes.append(ann['bbox'])
 
+
+
             new_img, new_boxes = self.scale(img=img, text_boxes=boxes, target_width=self.normalized_width, target_height=self.normalized_height)
             new_img = np.transpose(new_img, (2, 0, 1))
             new_img_tensor = np.ones(shape=(img.shape[2], self.normalized_height, self.normalized_width)) * 255
             new_img_tensor[:, :new_img.shape[1], :new_img.shape[2]] = new_img[:, :, :]
 
             images.append(new_img_tensor)
-            text_boxes.append(new_boxes)
+            cell_boxes.append(new_boxes)
 
         images = paddle.to_tensor(images, dtype=paddle.float32)
 
-        yield {'images': images, 'text_boxes': text_boxes}
+
+        yield {'images': images, 'cell_boxes': cell_boxes}
+
+    def __getitem__(self, idx: int):
+        """return origin image and cell boxes belong to the index
+
+        Args:
+            idx (int): index of the train or val ds
+
+        Returns:
+            tuple: images(np.ndarray) with shape (h, w, c)
+                   cell_boxes(list): (x1, y1, x2, y2)
+        """
+        imgs_info, anns = self.get_info()
+        img_info = imgs_info[idx]
+        file_name = img_info['file_name']
+        img_id = img_info['id']
+        img_path = os.path.join(self.imgs_dir, file_name)
+        img = self.check_and_read(img_path=img_path)
+
+        boxes = []
+        for j in range(len(anns)):
+            ann = anns[j]
+            if ann['image_id'] != img_id:
+                continue
+            boxes.append(ann['bbox'])
+
+        return img, boxes
 
     def check_and_read(self, img_path):
         assert os.path.exists(img_path), "file is not exists"
@@ -89,7 +137,7 @@ class TiesDataSet(IterableDataset):
 
         Returns:
             new_img (paddle.tensor): img with max edge 
-            new_text_boxes (paddle.tensor): 
+            new_text_boxes (paddle.tensor): [x1, y1, x2, y2]
         """
         h, w, c = img.shape
         ratio_h = target_height / h
@@ -111,31 +159,54 @@ class TiesDataSet(IterableDataset):
             new_y = origin_y * ratio
             new_w = w * ratio
             new_h = h * ratio
-            new_poly_box = [(new_x, new_y), (new_x + new_w, new_y), (new_x + new_w, new_y + new_h), (new_x, new_y + new_h)]
+            new_poly_box = [int(new_x), int(new_y), int(new_x + new_w), int(new_y + new_h)]
             new_text_boxes.append(new_poly_box)
         return new_img, new_text_boxes
 
-    def __getitem__(self, idx: int):
-        """return origin image and text boxes belong to the index
+    def get_cells_relations(self, boxes):
+        """split cell boxes into different rows and columns
 
         Args:
-            idx (int): index of the train or val ds
-
-        Returns:
-            tuple: images(np.ndarray) with shape (h, w, c) and text_boxes(list)
+            boxes (list): [x1, y1, x2, y2]
         """
+        boxes_rel = {}
+        for i in range(len(boxes)):
+            boxes_rel[str(i)] = {'same_row': [], 'same_col': []}
+            box = boxes[i]
+            for j in range(len(boxes)):
+                tmp_box = boxes[j]
+                # row, y
+                if (box[1] <= tmp_box[1] and box[3] >= tmp_box[3]) or (box[1] >= tmp_box[1] and box[3] <= tmp_box[3]):
+                    boxes_rel[str(i)]['same_row'].append(j)
+                # col, x
+                if (box[0] <= tmp_box[0] and box[2] >= tmp_box[2]) or (box[0] >= tmp_box[0] and box[2] <= tmp_box[2]):
+                    boxes_rel[str(i)]['same_col'].append(j)
+        return boxes_rel
+
+    def check_cells_relations(self, save_dir):
         imgs_info, anns = self.get_info()
-        img_info = imgs_info[idx]
-        file_name = img_info['file_name']
-        img_id = img_info['id']
-        img_path = os.path.join(self.imgs_dir, file_name)
-        img = self.check_and_read(img_path=img_path)
+        chosen_img_idx = random.choice(range(len(imgs_info)))
+        save_dir = os.path.join(save_dir, str(chosen_img_idx))
+        os.makedirs(save_dir, exist_ok=True)
+        img, cell_boxes = self.__getitem__(chosen_img_idx)
+        boxes_rel = self.get_cells_relations(boxes=cell_boxes)
+        for i in boxes_rel.keys():
+            same_rows = boxes_rel[i]['same_row']
+            same_rows.append(int(i))
+            same_rows_pts = []
+            for j in same_rows:
+                x1, y1, x2, y2 = cell_boxes[j]
+                same_rows_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+            row_img_show = draw_tables(img, same_rows_pts)
+            sp = os.path.join(save_dir, '.'.join([f"{i}_same_row", "png"]))
+            cv2.imwrite(sp, row_img_show)
 
-        boxes = []
-        for j in range(len(anns)):
-            ann = anns[j]
-            if ann['image_id'] != img_id:
-                continue
-            boxes.append(ann['bbox'])
-
-        return img, boxes
+            same_cols = boxes_rel[i]['same_col']
+            same_cols.append(int(i))
+            same_cols_pts = []
+            for k in same_cols:
+                x1, y1, x2, y2 = cell_boxes[k]
+                same_cols_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+            col_img_show = draw_tables(img, same_cols_pts)
+            sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
+            cv2.imwrite(sp, col_img_show)

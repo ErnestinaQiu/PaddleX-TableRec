@@ -20,13 +20,15 @@ class TestDs:
         for x in ties_ds:
             assert type(x) == dict, f'type(x): {type(x)}'
             assert 'images' in x.keys(), f'x.keys(): {x.keys()}'
-            assert 'text_boxes' in x.keys(), f'x.keys(): {x.keys()}'
+            assert 'cell_boxes' in x.keys(), f'x.keys(): {x.keys()}'
             images = x['images']
             assert images.shape[0] == self.config['num_samples'], f'images.shape: {images.shape}, self.config["num_samples"]: {self.config["num_samples"]}'
             assert images.shape[2] == self.config['normalized_height']
             assert images.shape[3] == self.config['normalized_width']
-            text_boxes = x['text_boxes']
+            text_boxes = x['cell_boxes']
             assert len(text_boxes) == self.config['num_samples']
+            print(text_boxes)
+            break
 
     def test_idx(self):
         ties_ds = TiesDataSet(config=self.config, logger=self.logger, mode='train', seed=123)
@@ -39,8 +41,14 @@ class TestDs:
         img_show = draw_tables(img, pts)
         cv2.imwrite(filename='./output/tmp/test_ds_idx.png', img=img_show)
 
+    def test_cells_relations(self):
+        ties_ds = TiesDataSet(config=self.config, logger=self.logger, mode='train', seed=123)
+        save_dir = os.path.join(os.getcwd(), 'output', 'tmp')
+        ties_ds.check_cells_relations(save_dir=save_dir)
+
 
 if __name__ == "__main__":
     test_ds = TestDs()
-    test_ds.test_ties_ds()
-    test_ds.test_idx()
+    # test_ds.test_ties_ds()
+    # test_ds.test_idx()
+    test_ds.test_cells_relations()

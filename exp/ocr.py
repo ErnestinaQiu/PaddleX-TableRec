@@ -24,9 +24,9 @@ class TableOCR:
     ) -> None:
         """an ocr and its postprocess for table
         Args:
-            log_level (int, optional)
-            log_file (str, optional)
-            platform (str, optional)
+            log_level (int, optional):
+            log_file (str, optional): 
+            platform (str, optional): ['aistudio', 'pc']
             save_dir (str, optional): default None
 
         Returns:
@@ -36,11 +36,12 @@ class TableOCR:
         self.platform = platform
         self.logger = get_logger(name='ocrtable', log_file=log_file, log_level=log_level)
         self.pipeline = create_pipeline(pipeline="OCR")
-        self.logger.info(dir(self.pipeline))
-        self.logger.info(dir(self.pipeline.text_det_model))
-        self.logger.info(dir(self.pipeline.text_rec_model))
+        # self.logger.info(dir(self.pipeline))
+        # self.logger.info(dir(self.pipeline.text_det_model))
+        # self.logger.info(dir(self.pipeline.text_rec_model))
         self.save_dir = save_dir
-        os.makedirs(self.save_dir, exist_ok=True)
+        if self.save_dir:
+            os.makedirs(self.save_dir, exist_ok=True)
 
     def get_ocr_text_boxes(self, img_path: str = None, save_dir: str = None):
         """_summary_
@@ -50,7 +51,7 @@ class TableOCR:
             save_dir (str, optional): directory to save. Defaults to None.
 
         Returns:
-            _type_: _description_
+            shrink_boxes (list): box [x, y, w, h]
         """
         img_name = os.path.basename(img_path).split('.')[0]
         if save_dir is not None:
