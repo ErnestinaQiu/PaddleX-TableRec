@@ -44,7 +44,7 @@ class TableOCR:
             os.makedirs(self.save_dir, exist_ok=True)
 
     def get_ocr_text_boxes(self, img_path: str = None, save_dir: str = None):
-        """_summary_
+        """get the text boxes of the ocr result of the img 
 
         Args:
             img_path (str, optional): image path. Defaults to None.
@@ -53,10 +53,11 @@ class TableOCR:
         Returns:
             shrink_boxes (list): box [x, y, w, h]
         """
-        img_name = os.path.basename(img_path).split('.')[0]
-        if save_dir is not None:
-            save_dir = os.path.join(save_dir, 'ocr_text_box', img_name)
-            os.makedirs(save_dir, exist_ok=True)
+        if img_path:
+            img_name = os.path.basename(img_path).split('.')[0]
+            if save_dir is not None:
+                save_dir = os.path.join(save_dir, 'ocr_text_box', img_name)
+                os.makedirs(save_dir, exist_ok=True)
         ocr_res = self.get_img_ocr_result(img_path=img_path, save_dir=save_dir)
         ocr_res_json = ocr_res._to_json()['res']
         rec_boxes = ocr_res_json['rec_boxes']
@@ -592,10 +593,10 @@ class TableOCR:
             if n == 0:
                 new_text_boxes.append([new_st, y, bonds[n][0], h])
                 tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]]
-                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0]]: [0:{h}, {new_st-x}:{new_st-x+ bonds[n][0]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
-            elif n!= 0:
+                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
+            elif n != 0:
                 new_text_boxes.append([new_st, y, bonds[n][0] - bonds[n-1][1], h])
-                tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][0]]
+                tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]-bonds[n-1][0]]
                 assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][1]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0] - bonds[n-1][1]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
 
             new_box_imgs.append(tmp_box_img)

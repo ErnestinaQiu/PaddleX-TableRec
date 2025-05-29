@@ -70,22 +70,37 @@ class TiesDataSet(IterableDataset):
             file_name = chosen_img_info['file_name']
             img_path = os.path.join(self.imgs_dir, file_name)
 
-            res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
-
             img = self.check_and_read(img_path=img_path)
-            boxes = []
+            boxes = []                     # [x, y, w, h]
+            new_format_boxes = []          # [x1, y1, x2, y2]
             for j in range(len(anns)):
                 ann = anns[j]
                 if ann['image_id'] != img_id:
                     continue
                 boxes.append(ann['bbox'])
+                x, y, w, h = ann['bbox']
+                new_format_boxes.append([x, y, x + w, y + h])
 
-
-
+            # get norm image tensor
             new_img, new_boxes = self.scale(img=img, text_boxes=boxes, target_width=self.normalized_width, target_height=self.normalized_height)
             new_img = np.transpose(new_img, (2, 0, 1))
             new_img_tensor = np.ones(shape=(img.shape[2], self.normalized_height, self.normalized_width)) * 255
             new_img_tensor[:, :new_img.shape[1], :new_img.shape[2]] = new_img[:, :, :]
+
+            # get relation matrix of ocr result boxes
+            cells_rel = self.get_cells_relations(boxes=new_format_boxes)
+
+            res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+            # get relations among ocr result boxes
+            
+
+                
+                
+            
+
+
+
 
             images.append(new_img_tensor)
             cell_boxes.append(new_boxes)
@@ -102,8 +117,9 @@ class TiesDataSet(IterableDataset):
             idx (int): index of the train or val ds
 
         Returns:
-            tuple: images(np.ndarray) with shape (h, w, c)
-                   cell_boxes(list): (x1, y1, x2, y2)
+            dict: 'image':  images(np.ndarray) with shape (h, w, c)
+                  'cell_boxes': cell_boxes(list), (x1, y1, x2, y2)
+                  'img_path': str, absolute path
         """
         imgs_info, anns = self.get_info()
         img_info = imgs_info[idx]
@@ -124,7 +140,7 @@ class TiesDataSet(IterableDataset):
             y2 = y + h
             boxes.append([x1, y1, x2, y2])
 
-        return img, boxes
+        return {'image': img, 'cell_boxes': boxes, 'img_path': img_path}
 
     def check_and_read(self, img_path):
         assert os.path.exists(img_path), "file is not exists"
@@ -173,13 +189,18 @@ class TiesDataSet(IterableDataset):
 
         Args:
             boxes (list): [x1, y1, x2, y2]
+        Returns:
+            boxes_rel (dict): {'index of box': {'same_row': list, 'same_col': list, 'box': [x1, y1, x2, y2]}}
+                            'same_row': indexes of boxes which belong to the same row, include the key box 
+                            'same_col': indexes of boxes which belong to the same col, include the key box
         """
         boxes_rel = {}
         for i in range(len(boxes)):
-            boxes_rel[str(i)] = {'same_row': [], 'same_col': []}
+            boxes_rel[str(i)] = {'same_row': [], 'same_col': [], 'box': []}
             box = boxes[i]
             for j in range(len(boxes)):
                 tmp_box = boxes[j]
+                boxes_rel[str(i)]['box'] = tmp_box
                 # row, y
                 if (box[1] <= tmp_box[1] and box[3] >= tmp_box[3]) or (box[1] >= tmp_box[1] and box[3] <= tmp_box[3]):
                     self.logger.debug(f'same row, box: {box}, tmp_box: {tmp_box}')
@@ -193,12 +214,19 @@ class TiesDataSet(IterableDataset):
     def check_cells_relations(self, save_dir):
         imgs_info, anns = self.get_info()
         chosen_img_idx = random.choice(range(len(imgs_info)))
-        save_dir = os.path.join(save_dir, str(chosen_img_idx))
+        save_dir = os.path.join(save_dir, str(chosen_img_idx), 'ocr_cell_box')
         os.makedirs(save_dir, exist_ok=True)
-        img, cell_boxes = self.__getitem__(chosen_img_idx)
+        info_dict = self.__getitem__(chosen_img_idx)
+        img = info_dict['image']
+        cell_boxes = info_dict['cell_boxes']
         cell_boxes_pts = []
         for box in cell_boxes:
-            x1, x2, y1, y2 = box
+            # x1, x2, y1, y2 = box
+            x, y, w, h = box
+            x1 = x
+            x2 = x + w
+            y1 = y
+            y2 = y + h
             cell_boxes_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
 
         img_show = draw_tables(img, cell_boxes_pts)
@@ -226,3 +254,115 @@ class TiesDataSet(IterableDataset):
             col_img_show = draw_tables(img, same_cols_pts)
             sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
             cv2.imwrite(sp, col_img_show)
+
+    def get_boxes_rels_according_to_cells_rels(self, res_boxes, cells_rel):
+        """get relations dict of res_boxes according to cells relations
+
+        Args:
+            res_boxes (list): the ocr result of table img, box inside is [x, y, w, h]
+            cells_rel (dict): the annotations of cells in table img, box inside is [x1, y1, x2, y2]
+        """
+        cell_to_res_box = {k: {'box': cells_rel[k]['box'], 'res_box_idxs': []} for k in cells_rel.keys()}
+        for i in cells_rel.keys():
+            c_x1, c_y1, c_x2, c_y2 = cells_rel[i]['box']
+            for j in range(len(res_boxes)):
+                x, y, w, h = res_boxes[j]
+                x1 = x
+                x2 = x + w
+                y1 = y
+                y2 = y + h
+                self.logger.debug(f'def get_boxes_rels_according_to_cells_rels: cell{i} {cells_rel[i]["box"]}, res box{j} {[x1, y1, x2, y2]}')
+                if x1 >= c_x1 and x2 <= c_x2 and y1 >= c_y1 and y2 <= c_y2:
+                    cell_to_res_box[str(i)]['res_box_idxs'].append(j)
+        self.logger.info(f'cell_to_res_box: {cell_to_res_box}')
+
+        i = None
+        j = None
+        res_box_rel = {str(k): {'box': [res_boxes[k][0], res_boxes[k][1], res_boxes[k][0] + res_boxes[k][2], res_boxes[k][1] + res_boxes[k][3]], 'same_cell': [], 'same_row': [], 'same_col': []} for k in range(len(res_boxes))}
+
+        for k in cell_to_res_box.keys():
+            res_box_idxs = cell_to_res_box[k]['res_box_idxs']
+            # same cell
+            if len(res_box_idxs) > 1:
+                for l in res_box_idxs:
+                    for m in res_box_idxs:
+                        res_box_rel[str(l)]['same_cell'].append(m)
+
+            cell_rel = cells_rel[k]
+            # same row
+            same_row_cell_idxs = cell_rel['same_row']
+            same_row_res_idxs = []
+            for i in same_row_cell_idxs:
+                same_row_res_idxs.extend(cell_to_res_box[str(i)]['res_box_idxs'])
+            for j in res_box_idxs:
+                res_box_rel[str(j)]['same_row'].extend(same_row_res_idxs)
+            i = None
+            j = None
+
+            # same col
+            same_col_cell_idxs = cell_rel['same_col']
+            same_col_res_idxs = []
+            for i in same_col_cell_idxs:
+                same_col_res_idxs.extend(cell_to_res_box[str(i)]['res_box_idxs'])
+            for j in res_box_idxs:
+                res_box_rel[str(j)]['same_col'].extend(same_col_res_idxs)
+            i = None
+            j = None
+
+        return res_box_rel
+
+    def check_res_box_relations(self, save_dir):
+        table_ocr = TableOCR(log_level=logging.INFO, platform='pc')
+        imgs_info, anns = self.get_info()
+        chosen_img_idx = random.choice(range(len(imgs_info)))
+        save_dir = os.path.join(save_dir, str(chosen_img_idx), 'ocr_res_box')
+        os.makedirs(save_dir, exist_ok=True)
+        info_dict = self.__getitem__(chosen_img_idx)
+        img = info_dict['image']
+        cell_boxes = info_dict['cell_boxes']
+
+        cell_boxes_pts = []
+        for box in cell_boxes:
+            x1, x2, y1, y2 = box
+            cell_boxes_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+        cell_boxes_img = draw_tables(img, cell_boxes_pts)
+        cell_boxes_path = os.path.join(save_dir, 'cell_boxes.png')
+        cv2.imwrite(cell_boxes_path, cell_boxes_img)
+
+        img_path = info_dict['img_path']
+
+        cells_rel = self.get_cells_relations(boxes=cell_boxes)
+        res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+        res_boxes_pts = []
+        for box in res_boxes:
+            x, y, w, h = box
+            res_boxes_pts.append([(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
+        res_boxes_img = draw_tables(img, res_boxes_pts)
+        res_boxes_path = os.path.join(save_dir, 'res_boxes.png')
+        cv2.imwrite(res_boxes_path, res_boxes_img)
+
+        res_boxes_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
+
+        self.logger.info(f'total res boxes num is {len(res_boxes)}\nres_boxes_rel: {res_boxes_rel}')
+
+        for i in res_boxes_rel.keys():
+            same_rows = res_boxes_rel[i]['same_row']
+            same_rows_pts = []
+            for j in same_rows:
+                x1, y1, x2, y2 = res_boxes_rel[str(j)]['box']
+                same_rows_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+            row_img_show = draw_tables(img, same_rows_pts)
+            sp = os.path.join(save_dir, '.'.join([f"{i}_same_row", "png"]))
+            cv2.imwrite(sp, row_img_show)
+
+            same_cols = res_boxes_rel[i]['same_col']
+            same_cols_pts = []
+            for k in same_cols:
+                x1, y1, x2, y2 = res_boxes_rel[str(k)]['box']
+                same_cols_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+            self.logger.info(f'res box index: {i}\nsame rows: {same_rows}\nsame cols: {same_cols}')
+            col_img_show = draw_tables(img, same_cols_pts)
+            sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
+            cv2.imwrite(sp, col_img_show)
+

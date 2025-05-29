@@ -1,6 +1,7 @@
 import os
 import cv2
 import yaml
+import logging
 from exp.data.ties_dataset import TiesDataSet
 from exp_exist_label import draw_tables
 
@@ -13,7 +14,7 @@ class TestDs:
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
 
-        self.logger = get_logger(name='test_ds', log_file='./output/tmp/test_ds.log')
+        self.logger = get_logger(name='test_ds', log_file='./output/tmp/test_ds.log', log_level=logging.DEBUG)
 
     def test_ties_ds(self):
         ties_ds = TiesDataSet(config=self.config, logger=self.logger, mode='train', seed=123)
@@ -46,9 +47,14 @@ class TestDs:
         save_dir = os.path.join(os.getcwd(), 'output', 'tmp')
         ties_ds.check_cells_relations(save_dir=save_dir)
 
+    def test_ocr_res_box_relations(self):
+        ties_ds = TiesDataSet(config=self.config, logger=self.logger, mode='train', seed=123)
+        save_dir = os.path.join(os.getcwd(), 'output', 'tmp')
+        ties_ds.check_res_box_relations(save_dir=save_dir)
 
 if __name__ == "__main__":
     test_ds = TestDs()
     # test_ds.test_ties_ds()
     # test_ds.test_idx()
     test_ds.test_cells_relations()
+    test_ds.test_ocr_res_box_relations()
