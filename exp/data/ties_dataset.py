@@ -117,7 +117,12 @@ class TiesDataSet(IterableDataset):
             ann = anns[j]
             if ann['image_id'] != img_id:
                 continue
-            boxes.append(ann['bbox'])
+            x, y, w, h = ann['bbox']
+            x1 = x
+            y1 = y
+            x2 = x + w
+            y2 = y + h
+            boxes.append([x1, y1, x2, y2])
 
         return img, boxes
 
@@ -177,9 +182,11 @@ class TiesDataSet(IterableDataset):
                 tmp_box = boxes[j]
                 # row, y
                 if (box[1] <= tmp_box[1] and box[3] >= tmp_box[3]) or (box[1] >= tmp_box[1] and box[3] <= tmp_box[3]):
+                    self.logger.debug(f'same row, box: {box}, tmp_box: {tmp_box}')
                     boxes_rel[str(i)]['same_row'].append(j)
                 # col, x
                 if (box[0] <= tmp_box[0] and box[2] >= tmp_box[2]) or (box[0] >= tmp_box[0] and box[2] <= tmp_box[2]):
+                    self.logger.debug(f'same col, box: {box}, tmp_box: {tmp_box}')
                     boxes_rel[str(i)]['same_col'].append(j)
         return boxes_rel
 
@@ -189,10 +196,19 @@ class TiesDataSet(IterableDataset):
         save_dir = os.path.join(save_dir, str(chosen_img_idx))
         os.makedirs(save_dir, exist_ok=True)
         img, cell_boxes = self.__getitem__(chosen_img_idx)
+        cell_boxes_pts = []
+        for box in cell_boxes:
+            x1, x2, y1, y2 = box
+            cell_boxes_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+
+        img_show = draw_tables(img, cell_boxes_pts)
+        table_img_path = os.path.join(save_dir, 'origin_table_img.png')
+        cv2.imwrite(table_img_path, img_show)
+
         boxes_rel = self.get_cells_relations(boxes=cell_boxes)
+        self.logger.info(f'total cell boxes num is {len(cell_boxes)}')
         for i in boxes_rel.keys():
             same_rows = boxes_rel[i]['same_row']
-            same_rows.append(int(i))
             same_rows_pts = []
             for j in same_rows:
                 x1, y1, x2, y2 = cell_boxes[j]
@@ -202,11 +218,11 @@ class TiesDataSet(IterableDataset):
             cv2.imwrite(sp, row_img_show)
 
             same_cols = boxes_rel[i]['same_col']
-            same_cols.append(int(i))
             same_cols_pts = []
             for k in same_cols:
                 x1, y1, x2, y2 = cell_boxes[k]
                 same_cols_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+            self.logger.info(f'cell box index: {i}\nsame rows: {same_rows}\nsame cols: {same_cols}')
             col_img_show = draw_tables(img, same_cols_pts)
             sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
             cv2.imwrite(sp, col_img_show)

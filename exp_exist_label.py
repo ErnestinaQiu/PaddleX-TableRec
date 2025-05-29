@@ -122,7 +122,7 @@ def test_scale(data_dir, save_dir, mode='train'):
 
         img = check_and_read(img_path=img_path)
         print(type(img))
-        
+
         pts_boxes = []
         boxes = []
         for j in range(len(anns)):
