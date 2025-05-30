@@ -191,16 +191,17 @@ class TiesDataSet(IterableDataset):
             boxes (list): [x1, y1, x2, y2]
         Returns:
             boxes_rel (dict): {'index of box': {'same_row': list, 'same_col': list, 'box': [x1, y1, x2, y2]}}
-                            'same_row': indexes of boxes which belong to the same row, include the key box 
-                            'same_col': indexes of boxes which belong to the same col, include the key box
+                            'same_row': indexes of boxes which belong to the same row
+                            'same_col': indexes of boxes which belong to the same col
         """
         boxes_rel = {}
         for i in range(len(boxes)):
-            boxes_rel[str(i)] = {'same_row': [], 'same_col': [], 'box': []}
             box = boxes[i]
+            boxes_rel[str(i)] = {'same_row': [], 'same_col': [], 'box': box}
             for j in range(len(boxes)):
+                if i == j:
+                    continue
                 tmp_box = boxes[j]
-                boxes_rel[str(i)]['box'] = tmp_box
                 # row, y
                 if (box[1] <= tmp_box[1] and box[3] >= tmp_box[3]) or (box[1] >= tmp_box[1] and box[3] <= tmp_box[3]):
                     self.logger.debug(f'same row, box: {box}, tmp_box: {tmp_box}')
@@ -211,8 +212,9 @@ class TiesDataSet(IterableDataset):
                     boxes_rel[str(i)]['same_col'].append(j)
         return boxes_rel
 
-    def check_cells_relations(self, save_dir):
+    def check_cells_relations(self, save_dir, seed=123):
         imgs_info, anns = self.get_info()
+        random.seed(seed)
         chosen_img_idx = random.choice(range(len(imgs_info)))
         save_dir = os.path.join(save_dir, str(chosen_img_idx), 'ocr_cell_box')
         os.makedirs(save_dir, exist_ok=True)
@@ -221,12 +223,7 @@ class TiesDataSet(IterableDataset):
         cell_boxes = info_dict['cell_boxes']
         cell_boxes_pts = []
         for box in cell_boxes:
-            # x1, x2, y1, y2 = box
-            x, y, w, h = box
-            x1 = x
-            x2 = x + w
-            y1 = y
-            y2 = y + h
+            x1, y1, x2, y2 = box
             cell_boxes_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
 
         img_show = draw_tables(img, cell_boxes_pts)
@@ -263,6 +260,7 @@ class TiesDataSet(IterableDataset):
             cells_rel (dict): the annotations of cells in table img, box inside is [x1, y1, x2, y2]
         """
         cell_to_res_box = {k: {'box': cells_rel[k]['box'], 'res_box_idxs': []} for k in cells_rel.keys()}
+        self.logger.debug(f'def get_boxes_rels_according_to_cells_rels: cells_rel: {cells_rel}')
         for i in cells_rel.keys():
             c_x1, c_y1, c_x2, c_y2 = cells_rel[i]['box']
             for j in range(len(res_boxes)):
@@ -311,9 +309,10 @@ class TiesDataSet(IterableDataset):
 
         return res_box_rel
 
-    def check_res_box_relations(self, save_dir):
+    def check_res_box_relations(self, save_dir, seed=123):
         table_ocr = TableOCR(log_level=logging.INFO, platform='pc')
         imgs_info, anns = self.get_info()
+        random.seed(seed)
         chosen_img_idx = random.choice(range(len(imgs_info)))
         save_dir = os.path.join(save_dir, str(chosen_img_idx), 'ocr_res_box')
         os.makedirs(save_dir, exist_ok=True)
@@ -323,7 +322,7 @@ class TiesDataSet(IterableDataset):
 
         cell_boxes_pts = []
         for box in cell_boxes:
-            x1, x2, y1, y2 = box
+            x1, y1, x2, y2 = box
             cell_boxes_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
         cell_boxes_img = draw_tables(img, cell_boxes_pts)
         cell_boxes_path = os.path.join(save_dir, 'cell_boxes.png')
