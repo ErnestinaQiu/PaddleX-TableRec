@@ -23,7 +23,7 @@ def write_ties_config_file():
     # the max number of words in a cell
     config['max_words_len'] = 30
     
-    config['num_batch'] = 30
+    config['batch_size'] = 30
     # within the same cell, within the same row, within the same column, no relation
     config['num_global_features'] = 4
     # 1 for binary image, 3 for color image

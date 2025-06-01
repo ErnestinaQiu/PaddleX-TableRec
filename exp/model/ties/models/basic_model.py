@@ -5,6 +5,7 @@ from typing import Dict
 
 import paddle
 from paddle import nn
+import numpy as np
 
 from exp.model.ties.models.conv_segment import BasicConvSegment
 from exp.model.ties.models.dgcnn_segment import DgcnnSegment
@@ -13,7 +14,11 @@ from exp.model.ties.ops.ties import gather_features_from_conv_head
 
 
 class BasicModel(nn.Layer):
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, logger):
+        super().__init__()
+
+        self.logger = logger
+
         # the following must be from config in the future version
         self.max_vertices = config['max_vertices']
 
@@ -21,10 +26,9 @@ class BasicModel(nn.Layer):
         self.normalized_height = config['normalized_height']
 
         self.num_vertex_features = config['num_vertex_features']
-        self.image_height = config['image_height']
-        self.image_width = config['image_width']
-        self.max_words_len = config['max_words_len']
-        self.num_batch = config['num_batch']
+        self.image_height = config['normalized_height']
+        self.image_width = config['normalized_width']
+        self.batch_size = config['batch_size']
         self.num_global_features = config['num_global_features']
         self.image_channels = config['image_channels']
         self.dim_vertex_x_position = config['dim_vertex_x_position']
@@ -40,6 +44,8 @@ class BasicModel(nn.Layer):
         self.is_sampling_balanced = config['is_sampling_balanced']
 
         self.momentum = config['momentum']
+
+        self.prob_thresh = config['prob_thresh']
 
         self.conv_segment = BasicConvSegment(normalized_height=self.normalized_height, normalized_width=self.normalized_width)
         self.graph_segment = DgcnnSegment()
@@ -62,32 +68,30 @@ class BasicModel(nn.Layer):
         b, c, h, w = images.shape
 
         assert len(images.shape) == 4, "Input images must be 4D tensor."
-        assert len(x['text_boxes']) == len(x['text_words_length']) == b, f"len(x['text_boxes']) != len(x['text_words_length']), len(x['text_boxes']): {len(x['text_boxes'])}, len(x['text_words_length']): {len(x['text_words_length'])}"
 
         text_boxes = x['text_boxes']
-        vertices_y = []
-        vertices_y2 = []
-        vertices_x = []
-        vertices_x2 = []
-        for box in text_boxes:
-            vertices_x.append(box[0])
-            vertices_y.append(box[1])
-            vertices_x2.append(box[2])
-            vertices_y2.append(box[3])
+        batch_vertices_y = np.zeros(shape=(b, self.max_vertices), dtype=np.float32)
+        batch_vertices_y2 = np.zeros(shape=(b, self.max_vertices), dtype=np.float32)
+        batch_vertices_x = np.zeros(shape=(b, self.max_vertices), dtype=np.float32)
+        batch_vertices_x2 = np.zeros(shape=(b, self.max_vertices), dtype=np.float32)
+        for k in range(len(text_boxes)):
+            vertices_y = []
+            vertices_y2 = []
+            vertices_x = []
+            vertices_x2 = []
+            for v in range(len(text_boxes[k])):
+                box = text_boxes[k][v]
+                batch_vertices_x[k, v] = box[0]
+                batch_vertices_y[k, v] = box[1]
+                batch_vertices_x2[k, v] = box[2]
+                batch_vertices_y2[k, v] = box[3]
 
-        vertices_x = paddle.to_tensor(vertices_x, dtype=paddle.float32)
-        vertices_x = paddle.reshape(vertices_x, (vertices_x.shape[0], 1))
+        vertices_y = paddle.to_tensor(data=batch_vertices_y, dtype=paddle.float32)
+        vertices_x = paddle.to_tensor(data=batch_vertices_x, dtype=paddle.float32)
+        vertices_y2 = paddle.to_tensor(data=batch_vertices_y2, dtype=paddle.float32)
+        vertices_x2 = paddle.to_tensor(data=batch_vertices_x2, dtype=paddle.float32)
 
-        vertices_y = paddle.to_tensor(vertices_y, dtype=paddle.float32)
-        vertices_y = paddle.reshape(vertices_y, (vertices_y.shape[0], 1))
-
-        vertices_x2 = paddle.to_tensor(vertices_x2, dtype=paddle.float32)
-        vertices_x2 = paddle.reshape(vertices_x2, (vertices_x2.shape[0], 1))
-
-        vertices_y2 = paddle.to_tensor(vertices_y2, dtype=paddle.float32)
-        vertices_y2 = paddle.reshape(vertices_y2, (vertices_y2.shape[0], 1))
-
-        conv_head = self.conv_segment(x)
+        conv_head = self.conv_segment(images)
 
         _, post_height, post_width, _ = conv_head.shape
         scale_y = float(post_height) / float(h)
@@ -96,28 +100,28 @@ class BasicModel(nn.Layer):
         gathered_image_features = gather_features_from_conv_head(conv_head, vertices_y, vertices_x,
                                                                  vertices_y2, vertices_x2, scale_y, scale_x)
 
-        _graph_vertex_features = paddle.zeros(shape=(b, self.max_vertices, self.num_vertex_features), dtype=paddle.float32)
-        words_length = x['text_words_length']
+        _graph_vertex_features = np.zeros(shape=(b, self.max_vertices, self.num_vertex_features), dtype=np.float32)
         for i in range(b):
-            assert len(text_boxes[i]) == len(words_length[i]), f'len(text_boxes[{i}]) != len(words_length[{i}]) in batch {i}, len(text_boxes[{i}]): {len(text_boxes[i])}, len(words_length[{i}]): {len(words_length[i])}'
             for j in range(len(text_boxes[i])):
                 x1, y1, x2, y2 = text_boxes[i][j]
-                _graph_vertex_features[i, j, :4] = [x1, y1, x2, y2]
+                _graph_vertex_features[i, j, :4] = np.array((x1, y1, x2, y2))
+        _graph_vertex_features = paddle.to_tensor(_graph_vertex_features, dtype=paddle.float32)
 
         vertices_combined_features = paddle.concat((_graph_vertex_features, gathered_image_features), axis=-1)
 
         graph_features = self.graph_segment(vertices_combined_features)
 
-        cell_predicted_adj_matrix = self.cell_clas_model(graph_features)
-        row_predicted_adj_matrix = self.row_clas_model(graph_features)
-        col_predicted_adj_matrix = self.col_clas_model(graph_features)
+        cell_prob_adj_matrix = self.cell_clas_model(graph_features)
+        cell_pred_adj_matrix = paddle.where(cell_prob_adj_matrix > self.prob_thresh, paddle.ones_like(cell_prob_adj_matrix), paddle.zeros_like(cell_prob_adj_matrix))
+        row_prob_adj_matrix = self.row_clas_model(graph_features)
+        row_pred_adj_matrix = paddle.where(row_prob_adj_matrix > self.prob_thresh, paddle.ones_like(row_prob_adj_matrix), paddle.zeros_like(row_prob_adj_matrix))
+        col_prob_adj_matrix = self.col_clas_model(graph_features)
+        col_pred_adj_matrix = paddle.where(col_prob_adj_matrix > self.prob_thresh, paddle.ones_like(col_prob_adj_matrix), paddle.zeros_like(col_prob_adj_matrix))
 
-        return {'cell_predicted_adj_matrix': cell_predicted_adj_matrix, 'row_predicted_adj_matrix': row_predicted_adj_matrix, 'col_predicted_adj_matrix': col_predicted_adj_matrix}
+        return {'cell_prob_adj_matrix': cell_prob_adj_matrix, 'cell_pred_adj_matrix': cell_pred_adj_matrix, 'row_prob_adj_matrix': row_prob_adj_matrix, 'row_pred_adj_matrix': row_pred_adj_matrix, 'col_prob_adj_matrix': col_prob_adj_matrix, 'col_pred_adj_matrix': col_pred_adj_matrix}
 
     def set_conv_segment(self, conv_segment):
         self.conv_segment = conv_segment
 
     def set_graph_segment(self, dgcnn_segment):
         self.graph_segment = dgcnn_segment
-
-

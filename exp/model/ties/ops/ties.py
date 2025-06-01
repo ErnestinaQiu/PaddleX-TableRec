@@ -9,11 +9,12 @@ from exp.model.ties.caloGraphNN import indexing_tensor
 
 
 class DenseLayer(paddle.nn.Layer):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, output_dim):
         super(DenseLayer, self).__init__()
-        self.linear = paddle.nn.Linear(input_dim, output_dim)
+        self.output_dim = output_dim
 
     def forward(self, x):
+        self.linear = paddle.nn.Linear(x.shape[-1], self.output_dim)
         x = self.linear(x)
         x = F.relu(x)
         return x
@@ -34,13 +35,13 @@ def gather_features_from_conv_head(conv_head, vertices_y, vertices_x, vertices_y
     Returns:
         The gathered features with shape [batch, max_vertices, channels]
     """
-    vertices_y = paddle.cast(vertices_y, paddle.float32) * scale_y
-    vertices_x = paddle.cast(vertices_x, paddle.float32) * scale_x
-    vertices_y2 = paddle.cast(vertices_y2, paddle.float32) * scale_y
-    vertices_x2 = paddle.cast(vertices_x2, paddle.float32) * scale_x
+    vertices_y = vertices_y * scale_y
+    vertices_x = vertices_x * scale_x
+    vertices_y2 = vertices_y2 * scale_y
+    vertices_x2 = vertices_x2 * scale_x
 
     batch_size, max_vertices = vertices_y.shape
-    batch_size, max_vertices = int(batch_size.value), int(max_vertices.value)
+    batch_size, max_vertices = int(batch_size), int(max_vertices)
 
     batch_range = paddle.arange(0, batch_size, dtype=paddle.float32).unsqueeze(-1).unsqueeze(-1)
     # transform the dimension to fit max_vertices
@@ -55,6 +56,7 @@ def gather_features_from_conv_head(conv_head, vertices_y, vertices_x, vertices_y
     indexing_tensor = paddle.concat([batch_range, mid_y, mid_x], axis=-1)
     indexing_tensor = paddle.cast(indexing_tensor, paddle.int64)
 
+    conv_head = paddle.transpose(conv_head, perm=(0, 2, 3, 1))
     return paddle.gather_nd(conv_head, indexing_tensor)
 
 
@@ -81,7 +83,7 @@ def edge_conv_layer(vertices_in: paddle.Tensor, num_neighbors: int = 30, mpl_lay
     edge = paddle.concat([expanded_trans_space, diff], axis=-1)
 
     for out_dim in mpl_layers:
-        dense_layer = DenseLayer(input_dim=edge.shape[1], output_dim=out_dim)
+        dense_layer = DenseLayer(output_dim=out_dim)
         edge = dense_layer(edge)
 
     if edge_activation is not None:

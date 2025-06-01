@@ -5,13 +5,14 @@ dim_vertex_y2_position: 3
 dim_vertex_y_position: 1
 image_channels: 1               # 1 for binary image, 3 for color image
 is_sampling_balanced: 1         # 1 for binary image, 3 for color image
-learning_rate: 0.0001
+learning_rate: 0.001
 max_vertices: 900               # the max vertices allowed
 # max_words_len: 30               # the max number of words in a cell, don't have such a annotation
 momentum: 0.6                   # momentum in Adam
 normalized_height: 256          # the normalized shape
 normalized_width: 256           # the normalized shape
-num_batch: 30
+batch_size: 32
+epoch_num: 10
 num_global_features: 4          # within the same cell, within the same row, within the same column, no relation
 num_vertex_features: 4          # Vertex features (x, y, x2, y2)
 samples_per_vertex: 6           # the max number of words in a cell, not used now
@@ -19,3 +20,7 @@ variable_scope: basic_conv_graph_alpha_1
 data_dir: 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets'
 num_samples: 16                 # number of sampling images
 seed: 123
+prob_thresh: 0.5                # thresh for pred
+loss_cell_weight: 1
+loss_row_weight: 1
+loss_col_weight: 1

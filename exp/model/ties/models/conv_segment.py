@@ -7,8 +7,9 @@ import numpy as np
 
 
 class BasicConvSegment(paddle.nn.Layer):
-    def __init__(self, normalized_width: int, normalized_height: int, name_scope=None, dtype="float32"):
-        super().__init__(name_scope, dtype)
+    def __init__(self, normalized_width: int, normalized_height: int):
+        super(BasicConvSegment, self).__init__()
+
         self.normalized_width = normalized_width
         self.normalized_height = normalized_height
         self.con2d_2 = paddle.nn.Conv2D(
@@ -24,7 +25,7 @@ class BasicConvSegment(paddle.nn.Layer):
         Returns:
             tensor: image features with shape (batch, 10, height - 12, width - 12)
         """
-        assert len(x.shape) == 4, "Input must be 4D."
+        assert len(x.shape) == 4, f"Input must be 4D, but get {x.shape}"
         assert x.shape[2] == self.normalized_height and x.shape[3] == self.normalized_width, f"Image shape must be [{self.normalized_height}, {self.normalized_width}], but got [{x.shape[2]}, {x.shape[3]}]"
 
         if isinstance(x, np.ndarray):

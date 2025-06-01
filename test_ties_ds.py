@@ -14,7 +14,7 @@ class TestDs:
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
 
-        self.logger = get_logger(name='test_ds', log_file='./output/tmp/test_ds.log', log_level=logging.DEBUG)
+        self.logger = get_logger(name='test_ds', log_file='./output/tmp/test_ds.log', log_level=logging.ERROR)
 
     def test_ties_ds(self):
         ties_ds = TiesDataSet(config=self.config, logger=self.logger, mode='train', seed=123)
@@ -22,13 +22,18 @@ class TestDs:
             assert type(x) == dict, f'type(x): {type(x)}'
             assert 'images' in x.keys(), f'x.keys(): {x.keys()}'
             assert 'cell_boxes' in x.keys(), f'x.keys(): {x.keys()}'
+            assert 'ocr_res_boxes' in x.keys(), f'x.keys(): {x.keys()}'
+            assert 'cell_adj_mats' in x.keys(), f'x.keys(): {x.keys()}'
+            assert 'row_adj_mats' in x.keys(), f'x.keys(): {x.keys()}'
+            assert 'col_adj_mats' in x.keys(), f'x.keys(): {x.keys()}'
             images = x['images']
             assert images.shape[0] == self.config['num_samples'], f'images.shape: {images.shape}, self.config["num_samples"]: {self.config["num_samples"]}'
+            assert images.shape[1] == 3
             assert images.shape[2] == self.config['normalized_height']
             assert images.shape[3] == self.config['normalized_width']
             text_boxes = x['cell_boxes']
             assert len(text_boxes) == self.config['num_samples']
-            print(text_boxes)
+            # print(text_boxes)
             break
 
     def test_idx(self):
@@ -54,7 +59,7 @@ class TestDs:
 
 if __name__ == "__main__":
     test_ds = TestDs()
-    # test_ds.test_ties_ds()
+    test_ds.test_ties_ds()
     # test_ds.test_idx()
-    test_ds.test_cells_relations()
-    test_ds.test_ocr_res_box_relations()
+    # test_ds.test_cells_relations()
+    # test_ds.test_ocr_res_box_relations()

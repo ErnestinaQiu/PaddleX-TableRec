@@ -13,7 +13,7 @@ class EdgeClassifier(nn.Layer):
         self.dim_num_vertices = dim_num_vertices
         self.max_vertices = max_vertices
 
-    def forward(self, graph_features, training=False, *inputs, **kwargs):
+    def forward(self, graph_features, training=True, *inputs, **kwargs):
         """_summary_
 
         Args:
@@ -28,15 +28,15 @@ class EdgeClassifier(nn.Layer):
         elif len(graph_features.shape) == 5:
             self.batch_norm = nn.BatchNorm3D(num_features=graph_features.shape[1], momentum=0.8)
 
-        net = self.batch_norm(graph_features, training=training)
-        self.dense1 = DenseLayer(input_dim=net.shape[1], output_dim=256)
+        net = self.batch_norm(graph_features)
+        self.dense1 = DenseLayer(output_dim=256)
         net = self.dense1(net)
         net = self.dense1(net)
         net = self.dense1(net)
 
-        self.dense2 = DenseLayer(input_dim=net.shape[1], output_dim=2)
+        self.dense2 = DenseLayer(output_dim=900)
         net = self.dense2(net)
 
-        predicted_adj_matrix = paddle.argmax(net, axis=-1)
+        predicted_adj_matrix = F.sigmoid(net)
 
         return predicted_adj_matrix
