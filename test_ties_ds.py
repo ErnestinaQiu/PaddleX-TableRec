@@ -34,6 +34,11 @@ class TestDs:
             text_boxes = x['cell_boxes']
             assert len(text_boxes) == self.config['num_samples']
             # print(text_boxes)
+
+            cell_adj_mats = x['cell_adj_mats']
+            row_adj_mats = x['row_adj_mats']
+            col_adj_mats = x['col_adj_mats']
+            print(f'cell_adj_mats.shape: {cell_adj_mats.shape}')
             break
 
     def test_idx(self):

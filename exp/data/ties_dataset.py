@@ -117,19 +117,18 @@ class TiesDataSet(IterableDataset):
                 same_cell_idxs = res_box_rel[k]['same_cell']
                 for m in same_cell_idxs:
                     cell_adj_mat[int(k), int(m)] = 1
-                cell_adj_mats.append(cell_adj_mat)
 
                 same_row_idxs = res_box_rel[k]['same_row']
                 for n in same_row_idxs:
                     row_adj_mat[int(k), int(n)] = 1
-                row_adj_mats.append(row_adj_mat)
 
                 same_col_idxs = res_box_rel[k]['same_col']
                 for l in same_col_idxs:
                     col_adj_mat[int(k), int(l)] = 1
-                col_adj_mats.append(col_adj_mat)
 
-        print(f'self.num_samples: {self.num_samples}, len(cell_adj_mats): {len(cell_adj_mats)}')
+            cell_adj_mats.append(cell_adj_mat)
+            row_adj_mats.append(row_adj_mat)
+            col_adj_mats.append(col_adj_mat)
 
         images = paddle.to_tensor(images, dtype=paddle.float32)
         cell_adj_mats = paddle.to_tensor(data=cell_adj_mats, dtype=paddle.float32)

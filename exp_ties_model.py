@@ -33,19 +33,19 @@ def get_pred_detail(d:dict, model, config:dict):
 
     correct_cell = paddle.equal(x=cell_pred_adj_mat, y=y_cell_adj_mats).astype(paddle.float32)
     cell_acc = paddle.mean(correct_cell)
-    cell_loss = F.binary_cross_entropy(logit=cell_pred_adj_mat, label=y_cell_adj_mats)
+    cell_loss = F.binary_cross_entropy(input=cell_pred_adj_mat, label=y_cell_adj_mats)
 
     correct_row = paddle.equal(x=row_pred_adj_mat, y=y_row_adj_mats).astype(paddle.float32)
     row_acc = paddle.mean(correct_row)
-    row_loss = F.binary_cross_entropy(logit=row_pred_adj_mat, label=y_row_adj_mats)
+    row_loss = F.binary_cross_entropy(input=row_pred_adj_mat, label=y_row_adj_mats)
 
     correct_col = paddle.equal(x=col_pred_adj_mat, y=y_col_adj_mats).astype(paddle.float32)
     col_acc = paddle.mean(correct_col)
-    col_loss = F.binary_cross_entropy(logit=col_pred_adj_mat, label=y_col_adj_mats)
+    col_loss = F.binary_cross_entropy(input=col_pred_adj_mat, label=y_col_adj_mats)
 
-    _loss_cell_weight = d['loss_cell_weight']
-    _loss_row_weight = d['loss_row_weight']
-    _loss_col_weight = d['loss_col_weight']
+    _loss_cell_weight = config['loss_cell_weight']
+    _loss_row_weight = config['loss_row_weight']
+    _loss_col_weight = config['loss_col_weight']
 
     loss_cell_weight = _loss_cell_weight / (_loss_cell_weight + _loss_row_weight + _loss_col_weight)
     loss_row_weight = _loss_row_weight / (_loss_cell_weight + _loss_row_weight + _loss_col_weight)
@@ -68,7 +68,7 @@ def exp():
     val_acc_history = []
     val_loss_history = []
 
-    paddle.set_device('cpu')
+    paddle.set_device('gpu')
 
     ds_logger = get_logger(name='exp_ds', log_file='./output/tmp/exp_ds.log', log_level=logging.CRITICAL)
     train_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='train', seed=123)

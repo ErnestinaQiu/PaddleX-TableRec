@@ -5,7 +5,7 @@ dim_vertex_y2_position: 3
 dim_vertex_y_position: 1
 image_channels: 1               # 1 for binary image, 3 for color image
 is_sampling_balanced: 1         # 1 for binary image, 3 for color image
-learning_rate: 0.001
+learning_rate: 0.01
 max_vertices: 900               # the max vertices allowed
 # max_words_len: 30               # the max number of words in a cell, don't have such a annotation
 momentum: 0.6                   # momentum in Adam
