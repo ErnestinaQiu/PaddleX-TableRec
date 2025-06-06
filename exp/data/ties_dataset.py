@@ -16,7 +16,7 @@ from exp_exist_label import draw_tables
 
 
 class TiesDataSet(IterableDataset):
-    def __init__(self, config, mode, logger, seed=None):
+    def __init__(self, config, mode, logger):
         super(TiesDataSet, self).__init__()
         self.logger = logger
         self.mode = mode.lower()
@@ -35,6 +35,7 @@ class TiesDataSet(IterableDataset):
         self.seed = config['seed']
         imgs_info, anns = self.get_info()
         self.imgs_num = len(imgs_info)
+        self.table_ocr = TableOCR(log_level=logging.INFO, platform='pc')
         del imgs_info
         del anns
         gc.collect()
@@ -51,7 +52,7 @@ class TiesDataSet(IterableDataset):
     def __iter__(self):
         """For model training
         Returns:
-            dict: {"images": paddle.Tensor|(b, c, h, w),
+            dict:  {"images": paddle.Tensor|(b, c, h, w),
                     "text_boxes": list|[[text boxes in one image], [...]],
                     "ocr_res_boxes": list|[[ocr result boxes in one image]],
                     "cell_adj_mat": paddle.Tensor|(b, max_vertices, max_vertices),
@@ -63,8 +64,6 @@ class TiesDataSet(IterableDataset):
         """
         random.seed(self.seed)
 
-        table_ocr = TableOCR(log_level=logging.INFO, platform='pc')
-
         imgs_info, anns = self.get_info()
         images = []
         cell_boxes = []
@@ -72,6 +71,8 @@ class TiesDataSet(IterableDataset):
         cell_adj_mats = []
         row_adj_mats = []
         col_adj_mats = []
+        batch_cell_rels = []
+        batch_res_boxes_rels = []
         for i in range(self.num_samples):
             chosen_img_info = imgs_info[random.choice(range(len(imgs_info)))]
             img_id = chosen_img_info['id']
@@ -98,10 +99,14 @@ class TiesDataSet(IterableDataset):
             # get relation matrix of ocr result boxes
             cells_rel = self.get_cells_relations(boxes=new_format_cell_boxes)
 
-            res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+            batch_cell_rels.append(cells_rel)
+
+            res_boxes = self.table_ocr.get_ocr_text_boxes(img_path=img_path)
 
             # get relations among ocr result boxes
             res_box_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
+
+            batch_res_boxes_rels.append(res_box_rel)
 
             # scale ocr res boxes
             norm_res_boxes = self.scale_by_ratio(boxes=res_boxes, ratio=ratio)
@@ -412,3 +417,15 @@ class TiesDataSet(IterableDataset):
             sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
             cv2.imwrite(sp, col_img_show)
 
+
+class MLDataSet(TiesDataSet):
+    def __init__(self, config, mode, logger, seed=None):
+        super().__init__(config, mode, logger, seed)
+
+    def __iter__(self):
+        random.seed(self.seed)
+
+        imgs_info, anns = self.get_info()
+        
+
+        return 

@@ -13,7 +13,7 @@ from exp.model.ties.models.edge_classfier import EdgeClassifier
 from exp.model.ties.ops.ties import gather_features_from_conv_head
 
 
-class BasicModel(nn.Layer):
+class BasicModelRow(nn.Layer):
     def __init__(self, config: Dict, logger):
         super().__init__()
 
@@ -110,14 +110,14 @@ class BasicModel(nn.Layer):
 
         graph_features = self.graph_segment(vertices_combined_features)
 
-        cell_prob_adj_matrix = self.cell_clas_model(graph_features)
-        cell_pred_adj_matrix = paddle.where(cell_prob_adj_matrix > self.prob_thresh, paddle.ones_like(cell_prob_adj_matrix), paddle.zeros_like(cell_prob_adj_matrix))
+        # cell_prob_adj_matrix = self.cell_clas_model(graph_features)
+        # cell_pred_adj_matrix = paddle.where(cell_prob_adj_matrix > self.prob_thresh, paddle.ones_like(cell_prob_adj_matrix), paddle.zeros_like(cell_prob_adj_matrix))
         row_prob_adj_matrix = self.row_clas_model(graph_features)
         row_pred_adj_matrix = paddle.where(row_prob_adj_matrix > self.prob_thresh, paddle.ones_like(row_prob_adj_matrix), paddle.zeros_like(row_prob_adj_matrix))
-        col_prob_adj_matrix = self.col_clas_model(graph_features)
-        col_pred_adj_matrix = paddle.where(col_prob_adj_matrix > self.prob_thresh, paddle.ones_like(col_prob_adj_matrix), paddle.zeros_like(col_prob_adj_matrix))
+        # col_prob_adj_matrix = self.col_clas_model(graph_features)
+        # col_pred_adj_matrix = paddle.where(col_prob_adj_matrix > self.prob_thresh, paddle.ones_like(col_prob_adj_matrix), paddle.zeros_like(col_prob_adj_matrix))
 
-        return {'cell_prob_adj_matrix': cell_prob_adj_matrix, 'cell_pred_adj_matrix': cell_pred_adj_matrix, 'row_prob_adj_matrix': row_prob_adj_matrix, 'row_pred_adj_matrix': row_pred_adj_matrix, 'col_prob_adj_matrix': col_prob_adj_matrix, 'col_pred_adj_matrix': col_pred_adj_matrix}
+        return {'row_prob_adj_matrix': row_prob_adj_matrix, 'row_pred_adj_matrix': row_pred_adj_matrix}
 
     def set_conv_segment(self, conv_segment):
         self.conv_segment = conv_segment

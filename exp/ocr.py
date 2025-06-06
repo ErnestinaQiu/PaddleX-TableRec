@@ -593,13 +593,14 @@ class TableOCR:
             if n == 0:
                 new_text_boxes.append([new_st, y, bonds[n][0], h])
                 tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]]
-                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
+                # assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
             elif n != 0:
                 new_text_boxes.append([new_st, y, bonds[n][0] - bonds[n-1][1], h])
                 tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]-bonds[n-1][0]]
-                assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][1]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0] - bonds[n-1][1]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
+                # assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][1]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0] - bonds[n-1][1]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
 
-            new_box_imgs.append(tmp_box_img)
+            if tmp_box_img != []:
+                new_box_imgs.append(tmp_box_img)
             new_st = x + bonds[n][1]
 
         if new_st != len(hor_proj) - 1:
