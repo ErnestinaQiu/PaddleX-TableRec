@@ -424,6 +424,7 @@ class MLDataSet(TiesDataSet):
         super().__init__(config, mode, logger)
         if mode in ['test', 'val']:
             self.num_samples = self.num_samples * 0.2
+        self.feas_mode = config['features_mode']
 
     def __iter__(self):
         random.seed(self.seed)
@@ -523,14 +524,24 @@ class MLDataSet(TiesDataSet):
                 core_x2 = x2 + 0.5 * w2
                 core_y2 = y2 + 0.5 * h2
 
-                core_x_diff = round((core_x1 - core_x2) / median_w, 4)
-                core_y_diff = round((core_y1 - core_y2) / median_h, 4)
-                lt_x_diff = round((x1 - x2) / median_w, 4)
-                br_x_diff = round((x12 - x22) / median_w, 4)
-                lt_y_diff = round((y1 - y2) / median_h, 4)
-                br_y_diff = round((y12 - y22) / median_h, 4)
-                w_diff = round((w1 - w2) / median_w, 4)
-                h_diff = round((h1 - h2) / median_h, 4)
+                if self.feas_mode == 'relative':
+                    core_x_diff = round((core_x1 - core_x2) / median_w, 4)
+                    core_y_diff = round((core_y1 - core_y2) / median_h, 4)
+                    lt_x_diff = round((x1 - x2) / median_w, 4)
+                    br_x_diff = round((x12 - x22) / median_w, 4)
+                    lt_y_diff = round((y1 - y2) / median_h, 4)
+                    br_y_diff = round((y12 - y22) / median_h, 4)
+                    w_diff = round((w1 - w2) / median_w, 4)
+                    h_diff = round((h1 - h2) / median_h, 4)
+                elif self.feas_mode == 'absolute':
+                    core_x_diff = core_x1 - core_x2
+                    core_y_diff = core_y1 - core_y2
+                    lt_x_diff = x1 - x2
+                    br_x_diff = x12 - x22
+                    lt_y_diff = y1 - y2
+                    br_y_diff = y12 - y22
+                    w_diff = w1 - w2
+                    h_diff = h1 - h2
 
                 data = {'core_x_diff': core_x_diff, 'core_y_diff': core_y_diff, 'lt_x_diff': lt_x_diff, 'br_x_diff': br_x_diff, 'lt_y_diff': lt_y_diff, 'br_y_diff': br_y_diff, 'w_diff': w_diff, 'h_diff': h_diff, 'label': boxes_rel}
                 samples.append(data)
