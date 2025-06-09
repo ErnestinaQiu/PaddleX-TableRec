@@ -44,7 +44,7 @@ class TableOCR:
             os.makedirs(self.save_dir, exist_ok=True)
 
     def get_ocr_text_boxes(self, img_path: str = None, save_dir: str = None):
-        """get the text boxes of the ocr result of the img 
+        """get the text boxes of the ocr result of the img
 
         Args:
             img_path (str, optional): image path. Defaults to None.

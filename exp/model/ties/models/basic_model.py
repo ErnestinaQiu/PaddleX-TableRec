@@ -42,8 +42,6 @@ class BasicModel(nn.Layer):
 
         self.is_sampling_balanced = config['is_sampling_balanced']
 
-        self.momentum = config['momentum']
-
         self.prob_thresh = config['prob_thresh']
 
         self.conv_segment = BasicConvSegment(normalized_height=self.normalized_height, normalized_width=self.normalized_width)

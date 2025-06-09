@@ -10,6 +10,7 @@ import random
 import logging
 import numpy as np
 import paddle
+import pandas as pd
 from paddle.io import IterableDataset
 from exp.ocr import TableOCR
 from exp_exist_label import draw_tables
@@ -419,13 +420,126 @@ class TiesDataSet(IterableDataset):
 
 
 class MLDataSet(TiesDataSet):
-    def __init__(self, config, mode, logger, seed=None):
-        super().__init__(config, mode, logger, seed)
+    def __init__(self, config, mode, logger):
+        super().__init__(config, mode, logger)
+        if mode in ['test', 'val']:
+            self.num_samples = self.num_samples * 0.2
 
     def __iter__(self):
         random.seed(self.seed)
 
-        imgs_info, anns = self.get_info()
-        
+        samples = []
 
-        return 
+        imgs_info, anns = self.get_info()
+        cat_samples_num = {'same_cell': 0, 'same_row': 0, 'same_col': 0, 'no_rel': 0}
+        balance_guard = True
+        while len(samples) < self.num_samples or balance_guard:
+            chosen_img_info = imgs_info[random.choice(range(len(imgs_info)))]
+            img_id = chosen_img_info['id']
+            file_name = chosen_img_info['file_name']
+            img_path = os.path.join(self.imgs_dir, file_name)
+
+            boxes = []                     # [x, y, w, h]
+            new_format_cell_boxes = []          # [x1, y1, x2, y2]
+            for j in range(len(anns)):
+                ann = anns[j]
+                if ann['image_id'] != img_id:
+                    continue
+                boxes.append(ann['bbox'])
+                x, y, w, h = ann['bbox']
+                new_format_cell_boxes.append([x, y, x + w, y + h])
+
+            cells_rel = self.get_cells_relations(boxes=new_format_cell_boxes)
+
+            res_boxes = self.table_ocr.get_ocr_text_boxes(img_path=img_path)
+            res_boxes_num = len(res_boxes)
+
+            res_box_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
+
+            ws = []
+            hs = []
+            for _box in res_boxes:
+                ws.append(_box[2])
+                hs.append(_box[3])
+            median_w = np.median(ws)
+            median_h = np.median(hs)
+
+            if res_boxes_num == 0:
+                continue
+            chosen_res_box_idx_1 = random.choice(range(res_boxes_num))
+            x1, y1, w1, h1 = res_boxes[chosen_res_box_idx_1]
+            x12 = x1 + w1
+            y12 = y1 + h1
+            core_x1 = x1 + 0.5 * w1
+            core_y1 = y1 + 0.5 * h1
+
+            res_box_1_rel = res_box_rel[str(chosen_res_box_idx_1)]
+            if len(samples) >= self.num_samples and cat_samples_num['same_cell'] / (len(samples) + 1e-8) < 0.2:
+                if len(res_box_1_rel['same_cell']) == 0:
+                    continue
+            if len(samples) >= self.num_samples and cat_samples_num['same_row'] / (len(samples) + 1e-8) < 0.2:
+                if len(res_box_1_rel['same_row']) == 0:
+                    continue
+            if len(samples) >= self.num_samples and cat_samples_num['same_col'] / (len(samples) + 1e-8) < 0.2:
+                if len(res_box_1_rel['same_col']) == 0:
+                    continue
+
+            no_rel_idx = []
+            same_cell_idxes = res_box_1_rel['same_cell']
+            same_row_idxes = res_box_1_rel['same_row']
+            same_col_idxes = res_box_1_rel['same_col']
+            for k in range(res_boxes_num):
+                if k in same_cell_idxes or k in same_row_idxes or k in same_col_idxes:
+                    continue
+                no_rel_idx.append(k)
+
+            for j in range(4):
+                if j == 0 and len(res_box_1_rel['same_cell']) != 0 and (len(samples) < self.num_samples or cat_samples_num['same_cell'] / (len(samples) + 1e-8) < 0.2):
+                    chosen_res_box_idx_2 = random.choice(res_box_1_rel['same_cell'])
+                    boxes_rel = 0
+                    cat_samples_num['same_cell'] += 1
+                elif j == 1 and len(res_box_1_rel['same_row']) != 0 and (len(samples) < self.num_samples or cat_samples_num['same_row'] / (len(samples) + 1e-8) < 0.2):
+                    chosen_res_box_idx_2 = random.choice(res_box_1_rel['same_row'])
+                    boxes_rel = 1
+                    cat_samples_num['same_row'] += 1
+                elif j == 2 and len(res_box_1_rel['same_col']) != 0 and (len(samples) < self.num_samples or cat_samples_num['same_col'] / (len(samples) + 1e-8) < 0.2):
+                    chosen_res_box_idx_2 = random.choice(res_box_1_rel['same_col'])
+                    boxes_rel = 2
+                    cat_samples_num['same_col'] += 1
+                elif j == 3 and len(no_rel_idx) != 0 and (len(samples) < self.num_samples or cat_samples_num['no_rel'] / (len(samples) + 1e-8) < 0.2):
+                    boxes_rel = 3
+                    cat_samples_num['no_rel'] += 1
+                    chosen_res_box_idx_2 = random.choice(no_rel_idx)
+                else:
+                    continue
+
+                # if boxes_rel == 3 and len(no_rel_idx) == 0:
+                #     continue
+
+                x2, y2, w2, h2 = res_boxes[chosen_res_box_idx_2]
+
+                x22 = x2 + w2
+                y22 = y2 + h2
+                core_x2 = x2 + 0.5 * w2
+                core_y2 = y2 + 0.5 * h2
+
+                core_x_diff = round((core_x1 - core_x2) / median_w, 4)
+                core_y_diff = round((core_y1 - core_y2) / median_h, 4)
+                lt_x_diff = round((x1 - x2) / median_w, 4)
+                br_x_diff = round((x12 - x22) / median_w, 4)
+                lt_y_diff = round((y1 - y2) / median_h, 4)
+                br_y_diff = round((y12 - y22) / median_h, 4)
+                w_diff = round((w1 - w2) / median_w, 4)
+                h_diff = round((h1 - h2) / median_h, 4)
+
+                data = {'core_x_diff': core_x_diff, 'core_y_diff': core_y_diff, 'lt_x_diff': lt_x_diff, 'br_x_diff': br_x_diff, 'lt_y_diff': lt_y_diff, 'br_y_diff': br_y_diff, 'w_diff': w_diff, 'h_diff': h_diff, 'label': boxes_rel}
+                samples.append(data)
+
+            if len(samples) > self.num_samples and cat_samples_num['same_cell']/(len(samples) + 1e-8) > 0.2 and cat_samples_num['same_row']/(len(samples) + 1e-8) > 0.2 and cat_samples_num['same_col']/(len(samples) + 1e-8) > 0.2 and cat_samples_num['no_rel']/(len(samples) + 1e-8) > 0.2:
+                balance_guard = False
+
+        random.shuffle(samples)
+
+        samples_df = pd.DataFrame(data=samples, columns=['core_x_diff', 'core_y_diff', 'lt_x_diff', 'br_x_diff', 'lt_y_diff', 'br_y_diff', 'w_diff', 'h_diff', 'label'])
+
+        yield samples_df

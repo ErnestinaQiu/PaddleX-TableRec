@@ -1,0 +1,11 @@
+normalized_height: 500          # the normalized shape
+normalized_width: 500           # the normalized shape
+epoch_num: 500
+learning_rate: 0.
+n_estimators: 500
+variable_scope: xgb
+data_dir: 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets'
+num_samples: 10                 # number of sampling images, equal to batch size
+seed: 123
+prob_thresh: 0.5                # thresh for pred
+max_vertices: 900               # the max vertices allowed

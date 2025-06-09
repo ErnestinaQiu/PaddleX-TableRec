@@ -3,11 +3,14 @@ exp
 author: Ernestina Qiu
 """
 import os
+import gc
 import yaml
 import logging
 import numpy as np
+from datetime import datetime
 
 import paddle
+import paddle.optimizer as optim
 import paddle.nn.functional as F
 from exp.model.ties.models.basic_model import BasicModel
 from exp.data.ties_dataset import TiesDataSet
@@ -31,17 +34,28 @@ def get_pred_detail(d:dict, model, config:dict):
     col_prob_adj_mat = pred_dict['col_prob_adj_matrix']
     col_pred_adj_mat = pred_dict['col_pred_adj_matrix']
 
-    correct_cell = paddle.equal(x=cell_pred_adj_mat, y=y_cell_adj_mats).astype(paddle.float32)
+    cell_prob_adj_upper_tri = paddle.tensor.triu(cell_prob_adj_mat, diagonal=1)
+    cell_pred_adj_upper_tri = paddle.tensor.triu(cell_pred_adj_mat, diagonal=1)
+    row_prob_adj_upper_tri = paddle.tensor.triu(row_prob_adj_mat, diagonal=1)
+    row_pred_adj_upper_tri = paddle.tensor.triu(row_pred_adj_mat, diagonal=1)
+    col_prob_adj_upper_tri = paddle.tensor.triu(col_prob_adj_mat, diagonal=1)
+    col_pred_adj_upper_tri = paddle.tensor.triu(col_pred_adj_mat, diagonal=1)
+
+    y_cell_adj_mats_upper_tri = paddle.tensor.triu(y_cell_adj_mats, diagonal=1)
+    y_row_adj_mats_upper_tri = paddle.tensor.triu(y_row_adj_mats, diagonal=1)
+    y_col_adj_mats_upper_tri = paddle.tensor.triu(y_col_adj_mats, diagonal=1)
+
+    correct_cell = paddle.equal(x=cell_pred_adj_upper_tri, y=y_cell_adj_mats_upper_tri).astype(paddle.float32)
     cell_acc = paddle.mean(correct_cell)
-    cell_loss = F.binary_cross_entropy(input=cell_pred_adj_mat, label=y_cell_adj_mats)
+    cell_loss = F.binary_cross_entropy(input=cell_prob_adj_upper_tri, label=y_cell_adj_mats_upper_tri)
 
-    correct_row = paddle.equal(x=row_pred_adj_mat, y=y_row_adj_mats).astype(paddle.float32)
+    correct_row = paddle.equal(x=row_pred_adj_upper_tri, y=y_row_adj_mats_upper_tri).astype(paddle.float32)
     row_acc = paddle.mean(correct_row)
-    row_loss = F.binary_cross_entropy(input=row_pred_adj_mat, label=y_row_adj_mats)
+    row_loss = F.binary_cross_entropy(input=row_prob_adj_upper_tri, label=y_row_adj_mats_upper_tri)
 
-    correct_col = paddle.equal(x=col_pred_adj_mat, y=y_col_adj_mats).astype(paddle.float32)
+    correct_col = paddle.equal(x=col_pred_adj_upper_tri, y=y_col_adj_mats_upper_tri).astype(paddle.float32)
     col_acc = paddle.mean(correct_col)
-    col_loss = F.binary_cross_entropy(input=col_pred_adj_mat, label=y_col_adj_mats)
+    col_loss = F.binary_cross_entropy(input=col_prob_adj_upper_tri, label=y_col_adj_mats_upper_tri)
 
     _loss_cell_weight = config['loss_cell_weight']
     _loss_row_weight = config['loss_row_weight']
@@ -62,7 +76,6 @@ def exp():
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     epoch_num = config['epoch_num']
-    batch_size = config['batch_size']
     learning_rate = config['learning_rate']
 
     val_acc_history = []
@@ -70,20 +83,41 @@ def exp():
 
     paddle.set_device('gpu')
 
-    ds_logger = get_logger(name='exp_ds', log_file='./output/tmp/exp_ds.log', log_level=logging.CRITICAL)
-    train_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='train', seed=123)
-    val_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='val', seed=123)
+    now = datetime.now()
+    date_string = now.strftime("%Y%m%d%H%M%S")
 
-    md_logger = get_logger(name='exp_md', log_file='./output/tmp/exp.log', log_level=logging.DEBUG)
+    save_dir = f'./output/exp/TIES/{date_string}'
+
+    ds_logger = get_logger(name='exp_ds', log_file=os.path.join(save_dir, 'exp_ds.log'), log_level=logging.CRITICAL)
+    train_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='train')
+    val_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='val')
+
+    md_logger = get_logger(name='exp_md', log_file=os.path.join(save_dir, f'exp_same_row_{date_string}.log'), log_level=logging.DEBUG)
     model = BasicModel(config, logger=md_logger)
+
+    md_save_dir = os.path.join(save_dir, 'models')
+    os.makedirs(md_save_dir, exist_ok=True)
+    best_md_save_dir = os.path.join(save_dir, 'best_model')
+    os.makedirs(best_md_save_dir, exist_ok=True)
+    best_md_sp = os.path.join(best_md_save_dir, 'best_model.pdparams')
+
+    pretrained_model_path = './output/exp/TIES/20250606120132/best_model/best_model.pdparams'
+    if os.path.exists(pretrained_model_path):
+        model.set_state_dict(paddle.load(pretrained_model_path))
+        print(f"Pretrained model loaded from {pretrained_model_path}")
+    else:
+        print(f"No pretrained model found at {pretrained_model_path}. Training from scratch.")
 
     model.train()
     opt = paddle.optimizer.Adam(
         learning_rate=learning_rate, parameters=model.parameters()
     )
 
-    print('start training ...')
+    scheduler = optim.lr.ReduceOnPlateau(learning_rate=learning_rate, mode='min', factor=0.5, patience=10, threshold=1e-4, cooldown=3, verbose=True)
 
+    md_logger.info('start training ...')
+
+    best_acc = 0.0
     for epoch in range(epoch_num):
         for batch_id, train_d in enumerate(train_ties_ds):
             train_detail = get_pred_detail(train_d, model=model, config=config)
@@ -96,8 +130,17 @@ def exp():
             train_col_loss = train_detail['col_loss']
             train_col_acc = train_detail['col_acc']
 
-            if batch_id % 1 == 0:
-                print(f"epoch: {epoch}, batch_id: {batch_id}, train_acc is: {train_acc}, loss is: {train_loss.numpy()}, train_cell_loss is: {train_cell_loss}, train_row_loss: {train_row_loss}, train_col_loss: {train_col_loss}\ntrain_cell_acc: {train_cell_acc}, train_row_acc: {train_row_acc}, train_col_acc: {train_col_acc}")
+            scheduler.step(metrics=train_loss)
+            current_lr = scheduler.last_lr
+            md_logger.info(f"[train] epoch: {epoch}, batch_id: {batch_id}, train_acc is: {train_acc}, loss is: {train_loss.numpy()}, lr: {current_lr}\ntrain_cell_loss: {train_cell_loss}, train_cell_acc: {train_cell_acc}, train_row_loss: {train_row_loss}, train_row_acc: {train_row_acc}, train_col_loss: {train_col_loss}, train_col_acc: {train_col_acc}")
+            if (epoch + 1) % 5 == 0:
+                save_path = os.path.join(md_save_dir, f"model_epoch_{epoch+1}_row_acc_{train_row_acc:.4f}.pdparams")
+                paddle.save(model.state_dict(), save_path)
+
+            if train_acc > best_acc:
+                best_acc = train_acc
+                paddle.save(model.state_dict(), best_md_sp)
+                md_logger.info(f'Best model saved at {best_md_sp}')
 
             train_loss.backward()
             opt.step()
@@ -122,10 +165,16 @@ def exp():
             losses.append(val_loss.numpy())
 
         avg_acc, avg_loss = np.mean(accuracies), np.mean(losses)
-        print(f"[validation] acc/loss: {val_acc.numpy()}/{val_loss.numpy()}, cell_loss is: {val_cell_loss}, row_loss: {val_row_loss}, col_loss: {val_col_loss}\ncell_acc: {val_cell_acc}, row_acc: {val_row_acc}, col_acc: {val_col_acc}")
+        md_logger.info(f"[validation] acc/loss: {val_acc.numpy()}/{val_loss.numpy()}, cell_loss is: {val_cell_loss}, row_loss: {val_row_loss}, col_loss: {val_col_loss}/ncell_acc: {val_cell_acc}, row_acc: {val_row_acc}, col_acc: {val_col_acc}")
         val_acc_history.append(avg_acc)
         val_loss_history.append(avg_loss)
         model.train()
+        del train_d
+        del val_d
+        gc.collect()
+        if (epoch + 1) % 2 == 0:
+            if paddle.is_compiled_with_cuda():
+                paddle.device.cuda.empty_cache()
 
 if __name__ == "__main__":
     exp()
