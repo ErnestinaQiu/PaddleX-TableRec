@@ -6,8 +6,10 @@ import os
 import gc
 import cv2
 import random
+import pickle
 from copy import deepcopy
 import numpy as np
+import pandas as pd
 from logging import NOTSET, DEBUG, INFO, ERROR
 from typing import Any, List, Optional, Tuple
 from paddlex import create_pipeline
@@ -20,7 +22,8 @@ class TableOCR:
         log_level=DEBUG,
         log_file='./output/exp/logs/debug.log',
         platform='aistudio',
-        save_dir=None
+        save_dir=None,
+        md_path='./output/exp/XGB/20250610115334/xgb.pickle',
     ) -> None:
         """an ocr and its postprocess for table
         Args:
@@ -42,6 +45,10 @@ class TableOCR:
         self.save_dir = save_dir
         if self.save_dir:
             os.makedirs(self.save_dir, exist_ok=True)
+        self.model = pickle.load(open(md_path, 'rb'))
+
+    def split_into_cell(self, ):
+        return
 
     def get_ocr_text_boxes(self, img_path: str = None, save_dir: str = None):
         """get the text boxes of the ocr result of the img
@@ -404,6 +411,140 @@ class TableOCR:
             plt.show()
             plt.close()
 
+    def split_into_region(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None, iou_thresh=0.6):
+        """ split text boxes into region cell
+
+        Args:
+            canvas (np.ndarray): blank matrix with text box as 1
+            text_boxes (List): the small text boxes, [[x, y, w, h], ...]
+            img (np.ndarray): for debug
+        Returns:
+            region (List): list of group of text boxes, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...]}, ...]
+        """
+        row_proj = []
+        for i in range(canvas.shape[0]):
+            row_proj.append(np.sum(canvas[i, :]))
+
+        row_subgraphs = {}
+
+        row_st = -1
+        for j in range(canvas.shape[0]):
+            if row_proj[j] > 0 and row_st == -1:
+                row_st = j
+            elif row_proj[j] == 0 and row_st != -1:
+                row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': []}
+                row_st = -1
+
+        if row_st != -1:
+            row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, img.shape[0] - 1], 'text_boxes': []}
+
+        col_proj = []
+        for k in range(canvas.shape[1]):
+            col_proj.append(np.sum(canvas[:, k]))
+
+        col_subgraphs = {}
+
+        col_st = -1
+        for q in range(canvas.shape[1]):
+            if col_proj[q] > 0 and col_st == -1:
+                col_st = q
+            elif col_proj[q] == 0 and col_st != -1:
+                col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, q - 1], 'text_boxes': []}
+                col_st = -1
+
+        regions = []          # [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h]]}]
+        i = 0
+        j = 0
+
+        for i in row_subgraphs.keys():
+            r_y1, r_y2 = row_subgraphs[i]['scope']
+            for j in col_subgraphs.keys():
+                r_x1, r_x2 = col_subgraphs[j]['scope']
+                rect2 = [r_x1, r_y1, r_x2, r_y2]
+                region = {'bound': rect2, 'text_boxes': []}
+                for box in text_boxes:
+                    x1, y1, w, h = box
+                    x2 = x1 + w
+                    y2 = y1 + h
+                    rect1 = [x1, y1, x2, y2]
+                    iou = compute_iou(box1=rect1, box2=rect2)
+                    if iou >= iou_thresh:
+                        region['text_boxes'].append(box)
+                if len(region['text_boxes']) == 0:
+                    continue
+                regions.append(region)
+
+        self.logger.debug(f'row_subgraphs: {row_subgraphs}\ncol_subgraphs: {col_subgraphs}\nregions: {regions}')
+
+        if self.logger_flag == DEBUG and img is not None:
+            from PIL import Image, ImageDraw, ImageFont
+            region_canvas = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            region_img = region_canvas.copy()
+            random.seed(0)
+            draw_region_img = ImageDraw.Draw(region_img)
+
+            i = 0
+            for i in range(len(regions)):
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                bound = regions[i]['bound']
+                region_pts = self.box_to_four_coordinates(box=bound)
+                draw_region_img.polygon(region_pts, fill=color)
+
+                text_boxes = regions[i]['text_boxes']
+                j = 0
+                color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                for j in range(len(text_boxes)):
+                    box = text_boxes[j]
+                    pts = self.box_to_four_coordinates(box=box)
+                    draw_region_img.polygon(pts, fill=color)
+
+            region_img = np.array(Image.blend(region_canvas, region_img, 0.5))
+            region_img_sp = None
+            if self.save_dir:
+                region_img_sp = os.path.join(self.save_dir, 'region_img.png')
+            self.show_img(img=region_img, sp=region_img_sp)
+            self.logger.debug(f'finish region, out into {region_img_sp}')
+            del region_img
+            del region_canvas
+            gc.collect()
+
+        return regions
+
+    def split_into_cell(self, regions: list):
+        """split regions into cells
+
+        Args:
+            regions (List): list of group of text boxes, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...]}, ...]
+        Returns:
+
+        """
+        new_regions = []
+        for i in range(len(regions)):
+            text_boxes = regions[i]['text_boxes']
+            if len(text_boxes) == 1:
+                new_regions.append(regions[i])
+                continue
+            boxes_rel = {}  # {'index of box': {'same_cell': [index of boxes|int], 'same_row': [index of boxes|int}, 'same_col': [index of boxes|int]}
+            for n in range(len(text_boxes)):
+                box1 = text_boxes[n]
+                boxes_rel[str(n)] = {'same_cell': [], 'same_row': [], 'same_col': []}
+                for m in range(n + 1, len(text_boxes)):
+                    box2 = text_boxes[m]
+                    rel = self.get_boxes_rel(box1=box1, box2=box2)
+                    if rel == 0:
+                        boxes_rel[str(n)]['same_cell'].append(m)
+                    elif rel == 1:
+                        boxes_rel[str(n)]['same_row'].append(m)
+                    elif rel == 2:
+                        boxes_rel[str(n)]['same_col'].append(m)
+                    elif rel == 3:
+                        continue
+            
+                    
+
+
+
+
     def split_into_subgraph(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None, iou_thresh=0.6):
         """ split text boxes into subgraphs
 
@@ -473,11 +614,59 @@ class TableOCR:
                     if x >= subgraph_scope[0] and x < subgraph_scope[1] and x + w > subgraph_scope[1]:
                         iou = round((subgraph_scope[1] - x)/w, 2)
                     elif x < subgraph_scope[0] and x + w > subgraph_scope[0] and x + w <= subgraph_scope[1]:
-                        iou = round((x+w-subgraph_scope[0])/w, 2)
+                        iou = round((x + w - subgraph_scope[0])/w, 2)
                     elif x <= subgraph_scope[0] and x + w > subgraph_scope[1]:
                         iou = round((subgraph_scope[1] - subgraph_scope[0])/w, 2)
                     if iou >= iou_thresh:
                         col_subgraphs[str(m)]['text_boxes'].append(box)
+
+        i = 0
+        for i in row_subgraphs.keys():
+            if len(row_subgraphs[i]['text_boxes']) > 1:
+                continue
+            y1, y2 = row_subgraphs[i]['scope']
+            if int(i) == 0:
+                row_subgraphs[str(int(i) + 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
+                y21, y22 = row_subgraphs[str(int(i) + 1)]['scope']
+                row_subgraphs[str(int(i) + 1)]['scope'] = [y1, y22]
+            elif int(i) == len(row_subgraphs) - 1:
+                row_subgraphs[str(int(i) - 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
+                y21, y22 = row_subgraphs[str(int(i) - 1)]['scope']
+                row_subgraphs[str(int(i) - 1)]['scope'] = [y21, y2]
+            else:
+                yl1, yl2 = row_subgraphs[str(int(i) - 1)]['scope']
+                yr1, yr2 = row_subgraphs[str(int(i) + 1)]['scope']
+                if y1 - yl2 <= yr1 - y2:
+                    row_subgraphs[str(int(i) - 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
+                    row_subgraphs[str(int(i) - 1)]['scope'] = [yl1, y2]
+                else:
+                    row_subgraphs[str(int(i) + 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
+                    row_subgraphs[str(int(i) + 1)]['scope'] = [y1, yr2]
+            del row_subgraphs[i]
+
+        i = 0
+        for i in col_subgraphs.keys():
+            if len(col_subgraphs[i]['text_boxes']) > 1:
+                continue
+            x1, x2 = col_subgraphs[i]['scope']
+            if int(i) == 0:
+                col_subgraphs[str(int(i) + 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
+                x21, x22 = col_subgraphs[str(int(i) + 1)]['scope']
+                col_subgraphs[str(int(i) + 1)]['scope'] = [x1, x22]
+            elif int(i) == len(col_subgraphs) - 1:
+                col_subgraphs[str(int(i) - 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
+                x21, x22 = col_subgraphs[str(int(i) - 1)]['scope']
+                col_subgraphs[str(int(i) - 1)]['scope'] = [x21, x2]
+            else:
+                xl1, xl2 = col_subgraphs[str(int(i) - 1)]['scope']
+                xr1, xr2 = col_subgraphs[str(int(i) + 1)]['scope']
+                if x1 - xl2 <= xr1 - x2:
+                    col_subgraphs[str(int(i) - 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
+                    col_subgraphs[str(int(i) - 1)]['scope'] = [xl1, x2]
+                else:
+                    col_subgraphs[str(int(i) + 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
+                    col_subgraphs[str(int(i) + 1)]['scope'] = [x1, xr2]
+            del col_subgraphs[i]
 
         subgraphs = {'row': row_subgraphs, 'col': col_subgraphs}
 
@@ -490,13 +679,13 @@ class TableOCR:
             random.seed(0)
             draw_row_img = ImageDraw.Draw(row_img)
 
-            for i in range(len(row_subgraphs)):
+            for i in row_subgraphs.keys():
                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-                scope = row_subgraphs[str(i)]['scope']
+                scope = row_subgraphs[i]['scope']
                 scope_pts = self.box_to_four_coordinates(box=[0, scope[0], img.shape[1], scope[1] - scope[0]])
                 draw_row_img.polygon(scope_pts, fill=color)
 
-                text_boxes = row_subgraphs[str(i)]['text_boxes']
+                text_boxes = row_subgraphs[i]['text_boxes']
                 j = 0
                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
                 for j in range(len(text_boxes)):
@@ -520,13 +709,13 @@ class TableOCR:
             col_img = col_subgraphs_canvas.copy()
             draw_col_img = ImageDraw.Draw(col_img)
 
-            for i in range(len(col_subgraphs)):
+            for i in col_subgraphs.keys():
                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-                scope = col_subgraphs[str(i)]['scope']
+                scope = col_subgraphs[i]['scope']
                 scope_pts = self.box_to_four_coordinates(box=[scope[0], 0, scope[1] - scope[0], img.shape[0]])
                 draw_col_img.polygon(scope_pts, fill=color)
 
-                text_boxes = col_subgraphs[str(i)]['text_boxes']
+                text_boxes = col_subgraphs[i]['text_boxes']
                 j = 0
                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
                 for j in range(len(text_boxes)):
@@ -652,3 +841,78 @@ class TableOCR:
         img_show.paste(img_top, (0, 0, w, h))
         img_show.paste(Image.fromarray(img_bottom), (0, h, w, h  * 2))
         return np.array(img_show)
+
+    def get_boxes_rel(self, box1: list, box2: list, res_boxes):
+        """predict the relationship between two boxes
+
+        Args:
+            box1 (list): [x, y, w, h]
+            box2 (list): [x, y, w, h]
+
+        Returns:
+            int: 0: same cell, 1: same row, 2: same col, 3: same no relation
+        """
+        ws = []
+        hs = []
+        for _box in res_boxes:
+            ws.append(_box[2])
+            hs.append(_box[3])
+        median_w = np.median(ws)
+        median_h = np.median(hs)
+
+        x1, y1, w1, h1 = box1
+        x12 = x1 + w1
+        y12 = y1 + h1
+        core_x1 = x1 + 0.5 * w1
+        core_y1 = y1 + 0.5 * h1
+
+        x2, y2, w2, h2 = box2
+        x22 = x2 + w2
+        y22 = y2 + h2
+        core_x2 = x2 + 0.5 * w2
+        core_y2 = y2 + 0.5 * h2
+
+        core_x_diff = round((core_x1 - core_x2) / median_w, 4)
+        core_y_diff = round((core_y1 - core_y2) / median_h, 4)
+        lt_x_diff = round((x1 - x2) / median_w, 4)
+        br_x_diff = round((x12 - x22) / median_w, 4)
+        lt_y_diff = round((y1 - y2) / median_h, 4)
+        br_y_diff = round((y12 - y22) / median_h, 4)
+        w_diff = round((w1 - w2) / median_w, 4)
+        h_diff = round((h1 - h2) / median_h, 4)
+
+        x_data = [{'core_x_diff': core_x_diff, 'core_y_diff': core_y_diff, 'lt_x_diff': lt_x_diff, 'br_x_diff': br_x_diff, 'lt_y_diff': lt_y_diff, 'br_y_diff': br_y_diff, 'w_diff': w_diff, 'h_diff': h_diff}]
+        x_df = pd.DataFrame(data=x_data, columns=['core_x_diff', 'core_y_diff', 'lt_x_diff', 'br_x_diff', 'lt_y_diff', 'br_y_diff', 'w_diff', 'h_diff'])
+
+        y = self.model.predict(x_df)[0]
+
+        return y
+
+
+# Function to compute IoU between two rectangles, from paddlex\inference\pipelines\table_recognition\pipeline_v2.py
+def compute_iou(box1, box2):
+    """
+    Compute the Intersection over Union (IoU) between two rectangles.
+
+    Args:
+        box1 (array-like): [x1, y1, x2, y2] of the first rectangle.
+        box2 (array-like): [x1, y1, x2, y2] of the second rectangle.
+
+    Returns:
+        float: The IoU between the two rectangles.
+    """
+    # Determine the coordinates of the intersection rectangle
+    x_left = max(box1[0], box2[0])
+    y_top = max(box1[1], box2[1])
+    x_right = min(box1[2], box2[2])
+    y_bottom = min(box1[3], box2[3])
+    if x_right <= x_left or y_bottom <= y_top:
+        return 0.0
+    # Calculate the area of intersection rectangle
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    # Calculate the area of both rectangles
+    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    # Calculate the IoU
+    iou = intersection_area / float(box1_area)
+    return iou

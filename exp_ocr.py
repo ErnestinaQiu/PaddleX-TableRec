@@ -116,6 +116,9 @@ def test_split_into_groups(img_path, platform, save_dir=None):
 
     table_ocr.split_into_subgraph(canvas=canvas, text_boxes=res_boxes, img=img)
 
+    table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+
+
 def test_my_ocr_img_dir(img_dir, save_dir=None):
     table_ocr = TableOCR()
     table_boxes_img_dir = os.path.join(save_dir, 'shrink_boxes')
@@ -141,12 +144,14 @@ def test_shrink_box():
     shrink_box = table_ocr.shrink_text_box(box_img=img)
     table_ocr.show_img(shrink_box)
 
+
 def draw_shrink_box_img_dir(img_dir, save_dir):
     table_ocr = TableOCR()
     for img_name in os.listdir(img_dir):
         img_path = os.path.join(img_dir, img_name)
         ocr_res = table_ocr.get_ocr_text_box(img_path=img_path, save_dir=save_dir)
     return ocr_res
+
 
 if __name__ == "__main__":
     mode = 'pc'  # 'pc' or 'aistudio'
@@ -170,4 +175,4 @@ if __name__ == "__main__":
     # test_my_ocr(img_path=img_path, save_dir=save_dir)
     # test_my_ocr_img_dir(img_dir=img_dir, save_dir=save_dir)
     # test_shrink_box()
-    test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_groups'), platform='aistudio')
+    test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_region'), platform='pc')

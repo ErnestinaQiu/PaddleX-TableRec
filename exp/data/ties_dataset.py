@@ -282,7 +282,7 @@ class TiesDataSet(IterableDataset):
         cv2.imwrite(table_img_path, img_show)
 
         boxes_rel = self.get_cells_relations(boxes=cell_boxes)
-        self.logger.info(f'total cell boxes num is {len(cell_boxes)}')
+        self.logger.debug(f'total cell boxes num is {len(cell_boxes)}')
         for i in boxes_rel.keys():
             same_rows = boxes_rel[i]['same_row']
             same_rows_pts = []
@@ -298,7 +298,7 @@ class TiesDataSet(IterableDataset):
             for k in same_cols:
                 x1, y1, x2, y2 = cell_boxes[k]
                 same_cols_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
-            self.logger.info(f'cell box index: {i}\nsame rows: {same_rows}\nsame cols: {same_cols}')
+            self.logger.debug(f'cell box index: {i}\nsame rows: {same_rows}\nsame cols: {same_cols}')
             col_img_show = draw_tables(img, same_cols_pts)
             sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
             cv2.imwrite(sp, col_img_show)
@@ -325,7 +325,7 @@ class TiesDataSet(IterableDataset):
                 self.logger.debug(f'def get_boxes_rels_according_to_cells_rels: cell{i} {cells_rel[i]["box"]}, res box{j} {[x1, y1, x2, y2]}')
                 if x1 >= c_x1 and x2 <= c_x2 and y1 >= c_y1 and y2 <= c_y2:
                     cell_to_res_box[str(i)]['res_box_idxs'].append(j)
-        self.logger.info(f'cell_to_res_box: {cell_to_res_box}')
+        self.logger.debug(f'cell_to_res_box: {cell_to_res_box}')
 
         i = None
         j = None
@@ -396,7 +396,7 @@ class TiesDataSet(IterableDataset):
 
         res_boxes_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
 
-        self.logger.info(f'total res boxes num is {len(res_boxes)}\nres_boxes_rel: {res_boxes_rel}')
+        self.logger.debug(f'total res boxes num is {len(res_boxes)}\nres_boxes_rel: {res_boxes_rel}')
 
         for i in res_boxes_rel.keys():
             same_rows = res_boxes_rel[i]['same_row']
@@ -413,7 +413,7 @@ class TiesDataSet(IterableDataset):
             for k in same_cols:
                 x1, y1, x2, y2 = res_boxes_rel[str(k)]['box']
                 same_cols_pts.append([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
-            self.logger.info(f'res box index: {i}\nsame rows: {same_rows}\nsame cols: {same_cols}')
+            self.logger.debug(f'res box index: {i}\nsame rows: {same_rows}\nsame cols: {same_cols}')
             col_img_show = draw_tables(img, same_cols_pts)
             sp = os.path.join(save_dir, '.'.join([f"{i}_same_col", "png"]))
             cv2.imwrite(sp, col_img_show)
@@ -554,3 +554,115 @@ class MLDataSet(TiesDataSet):
         samples_df = pd.DataFrame(data=samples, columns=['core_x_diff', 'core_y_diff', 'lt_x_diff', 'br_x_diff', 'lt_y_diff', 'br_y_diff', 'w_diff', 'h_diff', 'label'])
 
         yield samples_df
+
+    def GetDataSet(self, save_path):
+        rel_names = ['same_cell', 'same_row', 'same_col', 'no_rel']
+        samples = []
+
+        imgs_info, anns = self.get_info()
+        cat_samples_num = {'same_cell': 0, 'same_row': 0, 'same_col': 0, 'no_rel': 0}
+        for img_info in imgs_info:
+            img_id = img_info['id']
+            file_name = img_info['file_name']
+            img_path = os.path.join(self.imgs_dir, file_name)
+
+            boxes = []                     # [x, y, w, h]
+            new_format_cell_boxes = []          # [x1, y1, x2, y2]
+            for j in range(len(anns)):
+                ann = anns[j]
+                if ann['image_id'] != img_id:
+                    continue
+                boxes.append(ann['bbox'])
+                x, y, w, h = ann['bbox']
+                new_format_cell_boxes.append([x, y, x + w, y + h])
+
+            cells_rel = self.get_cells_relations(boxes=new_format_cell_boxes)
+
+            res_boxes = self.table_ocr.get_ocr_text_boxes(img_path=img_path)
+            res_boxes_num = len(res_boxes)
+
+            res_box_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
+
+            ws = []
+            hs = []
+            for _box in res_boxes:
+                ws.append(_box[2])
+                hs.append(_box[3])
+            median_w = np.median(ws)
+            median_h = np.median(hs)
+
+            if res_boxes_num == 0:
+                continue
+
+            for k1 in range(res_boxes_num):
+                x1, y1, w1, h1 = res_boxes[k1]
+                x12 = x1 + w1
+                y12 = y1 + h1
+                core_x1 = x1 + 0.5 * w1
+                core_y1 = y1 + 0.5 * h1
+
+                res_box_1_rel = res_box_rel[str(k1)]
+
+                no_rel_idx = []
+                same_cell_idxes = res_box_1_rel['same_cell']
+                same_row_idxes = res_box_1_rel['same_row']
+                same_col_idxes = res_box_1_rel['same_col']
+                for n in range(res_boxes_num):
+                    if n in same_cell_idxes or n in same_row_idxes or n in same_col_idxes:
+                        continue
+                    no_rel_idx.append(n)
+
+                for rel_name in rel_names:
+                    if rel_name != 'no_rel':
+                        cat_samples_num[rel_name] += len(res_box_1_rel[rel_name])
+                        indexes = res_box_1_rel[rel_name]
+                    else:
+                        cat_samples_num[rel_name] += len(no_rel_idx)
+                        indexes = no_rel_idx
+
+                    if rel_name == 'same_cell':
+                        boxes_rel = 0
+                    elif rel_name == 'same_row':
+                        boxes_rel = 1
+                    elif rel_name == 'same_col':
+                        boxes_rel = 2
+                    elif rel_name == 'no_rel':
+                        boxes_rel = 3
+
+                    for k2 in indexes:
+                        x2, y2, w2, h2 = res_boxes[k2]
+                        x22 = x2 + w2
+                        y22 = y2 + h2
+                        core_x2 = x2 + 0.5 * w2
+                        core_y2 = y2 + 0.5 * h2
+
+                        if self.feas_mode == 'relative':
+                            core_x_diff = round((core_x1 - core_x2) / median_w, 4)
+                            core_y_diff = round((core_y1 - core_y2) / median_h, 4)
+                            lt_x_diff = round((x1 - x2) / median_w, 4)
+                            br_x_diff = round((x12 - x22) / median_w, 4)
+                            lt_y_diff = round((y1 - y2) / median_h, 4)
+                            br_y_diff = round((y12 - y22) / median_h, 4)
+                            w_diff = round((w1 - w2) / median_w, 4)
+                            h_diff = round((h1 - h2) / median_h, 4)
+                        elif self.feas_mode == 'absolute':
+                            core_x_diff = core_x1 - core_x2
+                            core_y_diff = core_y1 - core_y2
+                            lt_x_diff = x1 - x2
+                            br_x_diff = x12 - x22
+                            lt_y_diff = y1 - y2
+                            br_y_diff = y12 - y22
+                            w_diff = w1 - w2
+                            h_diff = h1 - h2
+
+                        data = {'core_x_diff': core_x_diff, 'core_y_diff': core_y_diff, 'lt_x_diff': lt_x_diff, 'br_x_diff': br_x_diff, 'lt_y_diff': lt_y_diff, 'br_y_diff': br_y_diff, 'w_diff': w_diff, 'h_diff': h_diff, 'label': boxes_rel}
+
+                        samples.append(data)
+
+        samples_df = pd.DataFrame(data=samples, columns=['core_x_diff', 'core_y_diff', 'lt_x_diff', 'br_x_diff', 'lt_y_diff', 'br_y_diff', 'w_diff', 'h_diff', 'label'])
+        samples_labels_des = samples_df['label'].value_counts(normalize=True)
+
+        samples_df.to_csv(save_path, index=False, header=True, encoding='utf8')
+        self.logger.info(f'Output samples data into {save_path}\ndata distribution is:\n{samples_labels_des}')
+
+        return samples_labels_des
