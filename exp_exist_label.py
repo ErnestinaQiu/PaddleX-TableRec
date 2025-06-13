@@ -141,7 +141,7 @@ def test_scale(data_dir, save_dir, mode='train'):
 
         new_img_name = 'scaled_img.png'
         new_img_path = os.path.join(save_dir, new_img_name)
-        cv2.imwrite(new_img_path,new_img)
+        cv2.imwrite(new_img_path, new_img)
 
         new_table_show = 'table_img.png'
         new_table_path = os.path.join(save_dir, new_table_show)

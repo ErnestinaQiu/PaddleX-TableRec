@@ -5,11 +5,14 @@ description: test exp ocr
 import os
 import cv2
 import yaml
-from exp.ocr import TableOCR
+import json
+import logging
+from exp.ocr import TableOCR, compute_iou
 from exp_exist_label import check_and_read
 from paddlex.utils.config import parse_config
 from paddlex import create_pipeline
 from exp_exist_label import draw_tables
+from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
 
 
 def test_ocr_pipeline(img_path, save_dir):
@@ -39,7 +42,7 @@ def test_my_ocr(img_path, save_dir=None):
     origin_rec_boxes = ocr_res_json['rec_boxes']
     rec_boxes = []
     for rec_box in origin_rec_boxes:
-        rec_boxes.append(table_ocr.transform_ocr_box_into_four_coordinates(ocr_box=rec_box))
+        rec_boxes.append(table_ocr.transform_x1y1x2y2_into_four_coordinates(ocr_box=rec_box))
     origin_table = draw_tables(img=img, boxes=rec_boxes)
     table_ocr.show_img(origin_table)
 
@@ -80,7 +83,7 @@ def test_split_into_groups(img_path, platform, save_dir=None):
     origin_rec_boxes = ocr_res_json['rec_boxes']
     rec_boxes = []
     for rec_box in origin_rec_boxes:
-        rec_boxes.append(table_ocr.transform_ocr_box_into_four_coordinates(ocr_box=rec_box))
+        rec_boxes.append(table_ocr.transform_x1y1x2y2_into_four_coordinates(ocr_box=rec_box))
     origin_table = draw_tables(img=img, boxes=rec_boxes)
 
     if save_dir is not None:
@@ -119,6 +122,187 @@ def test_split_into_groups(img_path, platform, save_dir=None):
     table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
 
 
+def test_split_and_merge_data_dir(data_img_dir, platform, save_dir=None):
+    table_ocr = TableOCR(platform=platform, save_dir=None)
+    for img_name in os.listdir(data_img_dir):
+        img_path = os.path.join(data_img_dir, img_name)
+        img_base_name = os.path.basename(img_path).split('.')[0]
+        save_img_dir = os.path.join(save_dir, 'split_and_merge', img_base_name)
+        os.makedirs(save_img_dir, exist_ok=True)
+        table_ocr.save_dir = save_img_dir
+        img = table_ocr.check_and_read_img(img_path=img_path)
+        # origin img
+        ocr_res = table_ocr.get_img_ocr_result(img_path=img_path)
+        ocr_res_json = ocr_res._to_json()['res']
+        origin_rec_boxes = ocr_res_json['rec_boxes']
+        rec_boxes = []
+        for rec_box in origin_rec_boxes:
+            rec_boxes.append(table_ocr.transform_x1y1x2y2_into_four_coordinates(ocr_box=rec_box))
+        origin_table = draw_tables(img=img, boxes=rec_boxes)
+
+        if save_dir is not None:
+            sp = os.path.join(save_img_dir, 'table_ocr_img.png')
+        else:
+            sp = None
+        table_ocr.show_img(origin_table, sp=sp)
+
+        res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+        canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
+
+        if save_dir is not None:
+            canvas_sp = os.path.join(save_img_dir, 'table_ocr_text_boxes.png')
+        else:
+            canvas_sp = None
+        canvas = canvas * 255
+        table_ocr.show_img(canvas, sp=canvas_sp)
+
+        regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+
+        region_pts_poly = []
+        for d in regions:
+            pts = table_ocr.transform_x1y1x2y2_into_four_coordinates(d['bound'])
+            region_pts_poly.append(pts)
+        region_table = draw_tables(img=img, boxes=region_pts_poly)
+        print(f'regions: {regions}\n')
+        if save_dir is not None:
+            sp = os.path.join(save_img_dir, 'region_table.png')
+        else:
+            sp = None
+        table_ocr.show_img(region_table, sp=sp)
+
+        new_regions = table_ocr.merge_and_split(regions=regions, img=img)
+        region_pts_poly = []
+        for bound in new_regions:
+            if bound is None:
+                continue
+            pts = table_ocr.transform_x1y1x2y2_into_four_coordinates(bound)
+            region_pts_poly.append(pts)
+        new_region_table = draw_tables(img=img, boxes=region_pts_poly)
+        print(f'new regions: {new_regions}')
+        if save_dir is not None:
+            sp = os.path.join(save_img_dir, 'new_region_table.png')
+        else:
+            sp = None
+        table_ocr.show_img(new_region_table, sp=sp)
+        print(f'out into {sp}')
+
+
+def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=None):
+    log_dir = './output/exp/TableOcr'
+    os.makedirs(log_dir, exist_ok=True)
+    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(log_dir, 'test_indexes.log'), log_level=logging.DEBUG)
+
+    table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.ERROR)
+    test_indexes = {'total_cells': 0, 'correct_cells': 0, 'total_pred_cells': 0, 'iou_thresh': iou_thresh}   # correct cells meet the requirements where the iou > iou_thresh
+
+    imgs_dir = os.path.join(data_dir, "images")
+    anns_path = os.path.join(data_dir, "annotations", "instance_val.json")
+    with open(anns_path, 'r', encoding='utf8') as f:
+        val = json.load(f)
+    cat = val['categories']
+    assert len(cat) == 1, 'number of category is more than one, please check dataset'
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+    imgs_info = val['images']
+    anns = val['annotations']
+    for i in range(len(imgs_info)):
+        image_info = imgs_info[i]
+        img_name = image_info['file_name']
+        img_id = image_info['id']
+        img_path = os.path.join(imgs_dir, img_name)
+
+        img = table_ocr.check_and_read_img(img_path=img_path)
+        res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+        canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
+        canvas = canvas * 255
+        regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+        new_regions = table_ocr.merge_and_split(regions=regions, img=img)
+
+        test_indexes['total_pred_cells'] += len(regions)
+        for j in range(len(anns)):
+            ann = anns[j]
+            if ann['image_id'] != img_id:
+                continue
+            test_indexes['total_cells'] += 1
+            x, y, w, h = ann['bbox']
+            cell_box = (x, y, x + w, y + h)
+            for bound in new_regions:
+                iou = compute_iou(box1=cell_box, box2=bound)
+                if iou > iou_thresh:
+                    test_indexes['correct_cells'] += 1
+                    break
+        index_logger.debug(f'test_indexes: {test_indexes}')
+
+    test_indexes['recall'] = test_indexes['correct_cells'] / test_indexes['total']
+    test_indexes['precision'] = test_indexes['correct_cells'] / test_indexes['total_pred_cells']
+
+    index_logger.info(f'test_indexes: {test_indexes}')
+
+
+def test_split_and_merge_index_one_to_one(data_dir, platform, save_dir=None, iou_thresh=0.8):
+    log_dir = './output/exp/TableOcr'
+    os.makedirs(log_dir, exist_ok=True)
+    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(log_dir, 'test_indexes.log'), log_level=logging.DEBUG)
+
+    table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.ERROR)
+    test_indexes = {'total_cells': 0, 'correct_cells': 0, 'total_pred_cells': 0, 'recall': 0, 'precision': 0}  # correct cells meet the requirements where the iou > iou_thresh
+
+    imgs_dir = os.path.join(data_dir, "images")
+    anns_path = os.path.join(data_dir, "annotations", "instance_val.json")
+    with open(anns_path, 'r', encoding='utf8') as f:
+        val = json.load(f)
+    cat = val['categories']
+    assert len(cat) == 1, 'number of category is more than one, please check dataset'
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+    imgs_info = val['images']
+    anns = val['annotations']
+    for i in range(len(imgs_info)):
+        image_info = imgs_info[i]
+        img_name = image_info['file_name']
+        img_id = image_info['id']
+        img_path = os.path.join(imgs_dir, img_name)
+
+        img = table_ocr.check_and_read_img(img_path=img_path)
+        res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
+        canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
+        canvas = canvas * 255
+        regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+        new_regions = table_ocr.merge_and_split(regions=regions, img=img)
+
+        test_indexes['total_pred_cells'] += len(regions)
+        for j in range(len(anns)):
+            ann = anns[j]
+            if ann['image_id'] != img_id:
+                continue
+            test_indexes['total_cells'] += 1
+            x, y, w, h = ann['bbox']
+            cell_box = (x, y, x + w, y + h)
+            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=new_regions, iou_thresh=iou_thresh)
+            if ans:
+                test_indexes['correct_cells'] += 1
+
+        test_indexes['recall'] = test_indexes['correct_cells'] / test_indexes['total_cells']
+        test_indexes['precision'] = test_indexes['correct_cells'] / test_indexes['total_pred_cells']
+        index_logger.debug(f'test_indexes: {test_indexes}')
+
+    test_indexes['recall'] = test_indexes['correct_cells'] / test_indexes['total']
+    test_indexes['precision'] = test_indexes['correct_cells'] / test_indexes['total_pred_cells']
+
+    index_logger.info(f'test_indexes: {test_indexes}')
+
+
+def cal_metrics(gt_cell_bound, pred_bounds, iou_thresh):
+    count = 0
+    for bound in pred_bounds:
+        iou = compute_iou(box1=bound, box2=gt_cell_bound)
+        if iou >= iou_thresh:
+            count += 1
+    if count == 1:
+        return 1
+    return 0
+
 def test_my_ocr_img_dir(img_dir, save_dir=None):
     table_ocr = TableOCR()
     table_boxes_img_dir = os.path.join(save_dir, 'shrink_boxes')
@@ -135,6 +319,7 @@ def test_my_ocr_img_dir(img_dir, save_dir=None):
         cv2.imwrite(shrink_box_img_path, vis_img)
         table_ocr.show_img(vis_img)
     return None
+
 
 def test_shrink_box():
     img_path = 'D:/work/TableRec/PaddleX-TableRec/output/exp/ocr_text_box/border_bottom_18_M2YV6IY0NXGYQQURBAVT_39.jpg'
@@ -158,21 +343,29 @@ if __name__ == "__main__":
     save_dir = "./output/exp"
 
     if mode == 'pc':
-        data_dir = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless'
+        data_dir = 'D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets'
     elif mode == 'aistudio':
         import shutil
         if os.path.exists(save_dir):
             shutil.rmtree(save_dir)
         data_dir = './data/dataset'
 
-    # img_dir = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images')
+    img_dir = os.path.join(data_dir, 'images')
     # img_path = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images', 'border_bottom_18_M2YV6IY0NXGYQQURBAVT.jpg')
     # ocr_res = test_ocr(img_path=img_path)
     # ocr_res = test_ocr_pipeline(img_path=img_path, save_dir=save_dir)
 
-    img_path = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images/border_bottom_0_8CTA75BO6N49PDO4WLJD.jpg')
+    # img_path = os.path.join(data_dir, 'table-rec-v2-pipe_practical_datasets/images/border_bottom_0_8CTA75BO6N49PDO4WLJD.jpg')
 
     # test_my_ocr(img_path=img_path, save_dir=save_dir)
     # test_my_ocr_img_dir(img_dir=img_dir, save_dir=save_dir)
     # test_shrink_box()
-    test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_region'), platform='pc')
+    # test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_region'), platform='pc')
+
+    # for img_name in os.listdir(img_dir):
+    #     img_path = os.path.join(img_dir, img_name)
+    #     test_split_into_groups(img_path=img_path, save_dir=os.path.join(save_dir, 'split_into_region'), platform='aistudio')
+    # test_split_and_merge_data_dir(data_img_dir=img_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'split_into_region'))
+
+    # test_split_and_merge_index_iou(data_dir=data_dir, platform='aistudio', iou_thresh=0.5)
+    test_split_and_merge_index_one_to_one(data_dir=data_dir, platform='aistudio', iou_thresh=0.8)

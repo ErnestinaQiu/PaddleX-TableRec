@@ -14,6 +14,7 @@ from logging import NOTSET, DEBUG, INFO, ERROR
 from typing import Any, List, Optional, Tuple
 from paddlex import create_pipeline
 from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
+from paddlex.inference.pipelines.table_recognition.table_recognition_post_processing_v2 import sort_table_cells_boxes
 
 
 class TableOCR:
@@ -110,7 +111,7 @@ class TableOCR:
                 shrink_boxes.append(tmp_box)
                 if save_dir or self.save_dir:
                     tmp_box_img = img[tmp_box[1]: tmp_box[1] + tmp_box[3], tmp_box[0]: tmp_box[0] + tmp_box[2]]
-                    assert tmp_box_img != [], f'rec_boxes {i}, new_shrink_boxes {k}, tmp_box_img: {tmp_box_img}, tmp_box: {tmp_box}, img.shape: {img.shape}'
+                    # assert tmp_box_img != [], f'rec_boxes {i}, new_shrink_boxes {k}, tmp_box_img: {tmp_box_img}, tmp_box: {tmp_box}, img.shape: {img.shape}'
                     if save_dir is None:
                         save_dir = self.save_dir
                     box_img_name = '.'.join(['_'.join([img_name, str(i), 'modified', str(k)]), 'png'])
@@ -332,7 +333,7 @@ class TableOCR:
         pts = [(origin_x, origin_y), (origin_x + w, origin_y), (origin_x + w, origin_y + h), (origin_x, origin_y + h)]
         return pts
 
-    def transform_ocr_box_into_four_coordinates(self, ocr_box: List):
+    def transform_x1y1x2y2_into_four_coordinates(self, ocr_box: List):
         """_summary_
 
         Args:
@@ -421,36 +422,9 @@ class TableOCR:
         Returns:
             region (List): list of group of text boxes, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...]}, ...]
         """
-        row_proj = []
-        for i in range(canvas.shape[0]):
-            row_proj.append(np.sum(canvas[i, :]))
-
-        row_subgraphs = {}
-
-        row_st = -1
-        for j in range(canvas.shape[0]):
-            if row_proj[j] > 0 and row_st == -1:
-                row_st = j
-            elif row_proj[j] == 0 and row_st != -1:
-                row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': []}
-                row_st = -1
-
-        if row_st != -1:
-            row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, img.shape[0] - 1], 'text_boxes': []}
-
-        col_proj = []
-        for k in range(canvas.shape[1]):
-            col_proj.append(np.sum(canvas[:, k]))
-
-        col_subgraphs = {}
-
-        col_st = -1
-        for q in range(canvas.shape[1]):
-            if col_proj[q] > 0 and col_st == -1:
-                col_st = q
-            elif col_proj[q] == 0 and col_st != -1:
-                col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, q - 1], 'text_boxes': []}
-                col_st = -1
+        subgraphs = self.split_into_subgraph(canvas=canvas, text_boxes=text_boxes, img=img)
+        row_subgraphs = subgraphs['row']
+        col_subgraphs = subgraphs['col']
 
         regions = []          # [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h]]}]
         i = 0
@@ -510,19 +484,21 @@ class TableOCR:
 
         return regions
 
-    def split_into_cell(self, regions: list):
+    def merge_and_split(self, regions: list, img: np.ndarray, iou_thresh=0.6):
         """split regions into cells
 
         Args:
             regions (List): list of group of text boxes, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...]}, ...]
+            img (np.ndarray): image
         Returns:
-
+            new_regions (List): list of bound, [[x1, y1, x2, y2], ...]
         """
-        new_regions = []
+        new_regions_bound = []
         for i in range(len(regions)):
             text_boxes = regions[i]['text_boxes']
+            bound = regions[i]['bound']
             if len(text_boxes) == 1:
-                new_regions.append(regions[i])
+                new_regions_bound.append(regions[i]['bound'])
                 continue
             boxes_rel = {}  # {'index of box': {'same_cell': [index of boxes|int], 'same_row': [index of boxes|int}, 'same_col': [index of boxes|int]}
             for n in range(len(text_boxes)):
@@ -530,7 +506,7 @@ class TableOCR:
                 boxes_rel[str(n)] = {'same_cell': [], 'same_row': [], 'same_col': []}
                 for m in range(n + 1, len(text_boxes)):
                     box2 = text_boxes[m]
-                    rel = self.get_boxes_rel(box1=box1, box2=box2)
+                    rel = self.get_boxes_rel(box1=box1, box2=box2, res_boxes=text_boxes)
                     if rel == 0:
                         boxes_rel[str(n)]['same_cell'].append(m)
                     elif rel == 1:
@@ -539,11 +515,218 @@ class TableOCR:
                         boxes_rel[str(n)]['same_col'].append(m)
                     elif rel == 3:
                         continue
-            
-                    
 
+            # same cell merge
+            same_cells_indexes = []
+            for j in boxes_rel.keys():
+                if len(boxes_rel[j]['same_cell']) == 0:
+                    continue
+                repeat_guard = False
+                for k in range(len(same_cells_indexes)):
+                    if int(j) in same_cells_indexes[k]:
+                        repeat_guard = True
+                        break
+                if repeat_guard:
+                    continue
 
+                same_cell_idxs = boxes_rel[j]['same_cell']
+                add_idxs = []
+                for idx in same_cell_idxs:
+                    tmp_idxes = boxes_rel[str(idx)]['same_cell']
+                    for _idx in tmp_idxes:
+                        if _idx in same_cell_idxs:
+                            continue
+                        add_idxs.append(idx)
+                complete_same_cell_idxs = same_cell_idxs + add_idxs + [int(j)]
+                same_cells_indexes.append(complete_same_cell_idxs)
 
+            cell_region_info = []         # [{'bound': [x1, y1, x2, y2], 'text_boxes_idxs': []}]
+            deal_text_boxes_idxs = []
+            text_boxes_to_cell_region_map = {}
+            for q in range(len(same_cells_indexes)):
+                cell_boxes_indexes = same_cells_indexes[q]
+                x1 = 1e5
+                y1 = 1e5
+                x2 = -1
+                y2 = -1
+                for p in cell_boxes_indexes:
+                    tmp_x1, tmp_y1, tmp_w, tmp_h = text_boxes[p]
+                    tmp_x2 = tmp_x1 + tmp_w
+                    tmp_y2 = tmp_y1 + tmp_h
+                    x1 = min(x1, tmp_x1)
+                    x2 = max(x2, tmp_x2)
+                    y1 = min(y1, tmp_y1)
+                    y2 = max(y2, tmp_y2)
+                    text_boxes_to_cell_region_map[str(p)] = q
+                cell_region_info.append({'bound': [x1, y1, x2, y2], 'box': [x1, y1, x2 - x1, y2 - y1], 'text_boxes_idxs': cell_boxes_indexes})
+                deal_text_boxes_idxs.extend(cell_boxes_indexes)
+
+            q = 0
+            p = 0
+            for q in range(len(text_boxes)):
+                if q in deal_text_boxes_idxs:
+                    continue
+                _x, _y, _w, _h = text_boxes[q]
+                text_boxes_to_cell_region_map[q] = len(cell_region_info)
+                cell_region_info.append({'bound': [_x, _y, _x + _w, _y + _h], 'box': text_boxes[q], 'text_boxes_idxs': [q]})
+
+            if len(cell_region_info) == 1:
+                new_regions_bound.append(cell_region_info[0]['bound'])
+                continue
+
+            # analyze row & col
+            q = 0
+            inside_region_cell_boxes = []
+            for q in cell_region_info:
+                _x, _y, _w, _h = q['box']
+                inside_region_cell_boxes.append([_x - bound[0], _y - bound[1], _w, _h])
+
+            img_shape = img[bound[1]:bound[3], bound[0]:bound[2]].shape
+            canvas = self.ocr_box_canvas(text_boxes=inside_region_cell_boxes, img_shape=img_shape)
+
+            row_subgraphs = self.row_analyse(canvas=canvas)
+            q = 0
+            for q in row_subgraphs.keys():
+                row_subgraphs[q]['scope'] = [row_subgraphs[q]['scope'][0] + bound[1], row_subgraphs[q]['scope'][1] + bound[1]]
+
+            if len(row_subgraphs) == 1:
+                sorted_cell_region_info = sorted(cell_region_info, key=lambda x: x["box"][0])
+                sorted_cell_region_info = list(sorted_cell_region_info)
+
+                new_split_cell_bound = []
+                _st = bound[0]
+                q = 0
+                for q in range(len(sorted_cell_region_info) - 1):
+                    _x11, _y11, _x12, _y12 = sorted_cell_region_info[q]['bound']
+                    _x21, _y21, _x22, _y22 = sorted_cell_region_info[q + 1]['bound']
+                    _ed = int((_x12 + _x21) / 2)
+                    new_split_cell_bound.append([_st, bound[1], _ed, bound[3]])
+                    _st = _ed
+
+                new_split_cell_bound.append([_st, bound[1], bound[2], bound[3]])
+                new_regions_bound.extend(new_split_cell_bound)
+                continue
+            else:
+                # split rows
+                p = 0
+                q = 0
+                m = 0
+                for p in row_subgraphs.keys():
+                    subgraph_scope = row_subgraphs[p]['scope']
+                    row_subgraphs[p]['cells_info'] = []   # [{'cell_idx': int, 'cell_bound': [x1, y1, x2, y2], 'cell_box': [x, y, w, h], 'text_boxes_idxs': list of int|indexes of text boxes which belong to the same cell}]
+                    row_subgraphs[p]['bound'] = [bound[0], subgraph_scope[0], bound[2], subgraph_scope[1]]
+                    for q in range(len(cell_region_info)):
+                        box = cell_region_info[q]['box']
+                        x, y, w, h = box
+                        if y >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                            row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'cell_bound': cell_region_info[q]['bound'], 'cell_box': cell_region_info[q]['box'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs']})
+                        elif y + h <= subgraph_scope[0] or y >= subgraph_scope[1]:
+                            pass
+                        else:
+                            iou = 0
+                            if y >= subgraph_scope[0] and y < subgraph_scope[1] and y + h > subgraph_scope[1]:
+                                iou = round((subgraph_scope[1] - y) / h, 2)
+                            elif y < subgraph_scope[0] and y + h > subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                                iou = round((y + h - subgraph_scope[0]) / h, 2)
+                            elif y <= subgraph_scope[0] and y + h >= subgraph_scope[1]:
+                                iou = round((subgraph_scope[1] - subgraph_scope[0]) / h, 2)
+                            if iou >= iou_thresh:
+                                row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'cell_bound': cell_region_info[q]['bound'], 'cell_box': cell_region_info[q]['box'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs']})
+
+                # get new split bounds
+                p = 0
+                q = 0
+                for q in range(len(row_subgraphs.keys())):
+                    p = list(row_subgraphs.keys())[q]
+                    if len(row_subgraphs[p]['cells_info']) == 1:
+                        new_regions_bound.append(row_subgraphs[p]['bound'])
+                        continue
+                    row_subgraphs[p]['cells_info'] = list(sorted(row_subgraphs[p]['cells_info'], key=lambda x: x["cell_box"][0]))
+                    scope = row_subgraphs[p]['scope']
+
+                    new_split_cell_bound = []
+                    _st = bound[0]
+                    q = 0
+                    for q in range(len(row_subgraphs[p]['cells_info']) - 1):
+                        _x11, _y11, _x12, _y12 = row_subgraphs[p]['cells_info'][q]['cell_bound']
+                        _x21, _y21, _x22, _y22 = row_subgraphs[p]['cells_info'][q + 1]['cell_bound']
+                        _ed = int((_x12 + _x21) / 2)
+                        new_split_cell_bound.append([_st, scope[0], _ed, scope[1]])
+                        _st = _ed
+
+                    new_split_cell_bound.append([_st, scope[0], bound[2], scope[1]])
+                    new_regions_bound.extend(new_split_cell_bound)
+                    continue
+
+            # transform text boxes rel
+            # cells_rel = {}
+            # q = 0
+            # n = 0
+            # m = 0
+            # for q in boxes_rel.keys():
+            #     rel = boxes_rel[str(q)]
+            #     cell_idx = text_boxes_to_cell_region_map[q]
+            #     same_row = []
+            #     for n in rel['same_row']:
+            #         same_row.append(text_boxes_to_cell_region_map[str(n)])
+            #     same_col = []
+            #     for m in rel['same_col']:
+            #         same_col.append(text_boxes_to_cell_region_map[str(m)])
+            #     if cell_idx not in cells_rels.keys():
+            #         cells_rel[str(cell_idx)] = {'same_row': same_row, 'same_col': same_col}
+            #     else:
+            #         n = 0
+            #         for n in same_row:
+            #             if n not in cells_rel[str(cell_idx)]['same_row']:
+            #                 cells_rel[str(cell_idx)]['same_row'].append(n)
+            #         m = 0
+            #         for m in same_col:
+            #             if m not in cells_rel[str(cell_idx)]['same_col']:
+            #                 cells_rel[str(cell_idx)]['same_col'].append(m)
+        return new_regions_bound
+
+    def row_analyse(self, canvas: np.ndarray):
+        row_proj = []
+        for i in range(canvas.shape[0]):
+            row_proj.append(np.sum(canvas[i, :]))
+
+        row_subgraphs = {}
+
+        row_st = -1
+        for j in range(canvas.shape[0]):
+            if row_proj[j] > 0 and row_st == -1:
+                row_st = j
+            elif row_proj[j] == 0 and row_st != -1:
+                row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': []}
+                row_st = -1
+
+        if row_st != -1:
+            row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, canvas.shape[0] - 1], 'text_boxes': []}
+
+        correct_st = 0
+        for k in range(len(row_subgraphs)-1):
+            correct_ed = int(row_subgraphs[str(k)]['scope'][1] + row_subgraphs[str(k+1)]['scope'][0] / 2)
+            row_subgraphs[str(k)]['scope'] = [correct_st, correct_ed]
+        return row_subgraphs
+
+    def col_analyse(self, canvas: np.ndarray, img: np.ndarray):
+        col_proj = []
+        for k in range(canvas.shape[1]):
+            col_proj.append(np.sum(canvas[:, k]))
+
+        col_subgraphs = {}
+
+        col_st = -1
+        for q in range(canvas.shape[1]):
+            if col_proj[q] > 0 and col_st == -1:
+                col_st = q
+            elif col_proj[q] == 0 and col_st != -1:
+                col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, q - 1], 'text_boxes': []}
+                col_st = -1
+
+        if col_st != -1:
+            col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, canvas.shape[1] - 1], 'text_boxes': []}
+        return col_subgraphs
 
     def split_into_subgraph(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None, iou_thresh=0.6):
         """ split text boxes into subgraphs
@@ -586,6 +769,9 @@ class TableOCR:
                 col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, q - 1], 'text_boxes': []}
                 col_st = -1
 
+        if col_st != -1:
+            col_subgraphs[str(len(col_subgraphs))] = {'scope': [col_st, canvas.shape[1] - 1], 'text_boxes': []}
+
         for box in text_boxes:
             x, y, w, h = box
             for n in range(len(row_subgraphs)):
@@ -595,6 +781,7 @@ class TableOCR:
                 elif y + h <= subgraph_scope[0] or y >= subgraph_scope[1]:
                     pass
                 else:
+                    iou = 0
                     if y >= subgraph_scope[0] and y < subgraph_scope[1] and y + h > subgraph_scope[1]:
                         iou = round((subgraph_scope[1] - y)/h, 2)
                     elif y < subgraph_scope[0] and y + h > subgraph_scope[0] and y + h <= subgraph_scope[1]:
@@ -611,6 +798,7 @@ class TableOCR:
                 elif x + h <= subgraph_scope[0] or x >= subgraph_scope[1]:
                     pass
                 else:
+                    iou = 0
                     if x >= subgraph_scope[0] and x < subgraph_scope[1] and x + w > subgraph_scope[1]:
                         iou = round((subgraph_scope[1] - x)/w, 2)
                     elif x < subgraph_scope[0] and x + w > subgraph_scope[0] and x + w <= subgraph_scope[1]:
@@ -626,9 +814,7 @@ class TableOCR:
                 continue
             y1, y2 = row_subgraphs[i]['scope']
             if int(i) == 0:
-                row_subgraphs[str(int(i) + 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
-                y21, y22 = row_subgraphs[str(int(i) + 1)]['scope']
-                row_subgraphs[str(int(i) + 1)]['scope'] = [y1, y22]
+                continue
             elif int(i) == len(row_subgraphs) - 1:
                 row_subgraphs[str(int(i) - 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
                 y21, y22 = row_subgraphs[str(int(i) - 1)]['scope']
@@ -642,7 +828,8 @@ class TableOCR:
                 else:
                     row_subgraphs[str(int(i) + 1)]['text_boxes'].extend(row_subgraphs[i]['text_boxes'])
                     row_subgraphs[str(int(i) + 1)]['scope'] = [y1, yr2]
-            del row_subgraphs[i]
+            row_subgraphs[i]['text_boxes'] = []
+        row_subgraphs = {n: row_subgraphs[n] for n in row_subgraphs.keys() if row_subgraphs[n]['text_boxes'] != []}
 
         i = 0
         for i in col_subgraphs.keys():
@@ -650,9 +837,7 @@ class TableOCR:
                 continue
             x1, x2 = col_subgraphs[i]['scope']
             if int(i) == 0:
-                col_subgraphs[str(int(i) + 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
-                x21, x22 = col_subgraphs[str(int(i) + 1)]['scope']
-                col_subgraphs[str(int(i) + 1)]['scope'] = [x1, x22]
+                continue
             elif int(i) == len(col_subgraphs) - 1:
                 col_subgraphs[str(int(i) - 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
                 x21, x22 = col_subgraphs[str(int(i) - 1)]['scope']
@@ -666,7 +851,9 @@ class TableOCR:
                 else:
                     col_subgraphs[str(int(i) + 1)]['text_boxes'].extend(col_subgraphs[i]['text_boxes'])
                     col_subgraphs[str(int(i) + 1)]['scope'] = [x1, xr2]
-            del col_subgraphs[i]
+            col_subgraphs[i]['text_boxes'] = []
+
+        col_subgraphs = {n: col_subgraphs[n] for n in col_subgraphs.keys() if col_subgraphs[n]['text_boxes'] != []}
 
         subgraphs = {'row': row_subgraphs, 'col': col_subgraphs}
 
@@ -780,12 +967,18 @@ class TableOCR:
         new_box_imgs = []
         for n in range(len(bonds)):
             if n == 0:
-                new_text_boxes.append([new_st, y, bonds[n][0], h])
-                tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]]
+                if bonds[n][0] > 1 and h > 1:
+                    new_text_boxes.append([new_st, y, bonds[n][0], h])
+                    tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]]
+                else:
+                    tmp_box_img = []
                 # assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
-            elif n != 0:
-                new_text_boxes.append([new_st, y, bonds[n][0] - bonds[n-1][1], h])
-                tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]-bonds[n-1][0]]
+            else:
+                if bonds[n][0] - bonds[n-1][1] > 1 and h > 1:
+                    new_text_boxes.append([new_st, y, bonds[n][0] - bonds[n-1][1], h])
+                    tmp_box_img = box_img[0:h, new_st-x:new_st-x+bonds[n][0]-bonds[n-1][0]]
+                else:
+                    tmp_box_img = []
                 # assert tmp_box_img != [], f'[0:h, new_st-x:new_st-x+bonds[n][0] - bonds[n-1][1]]: [0:{h}, {new_st-x}:{new_st-x+bonds[n][0] - bonds[n-1][1]}], box_img: {box_img.shape}, bonds: {bonds}, n: {n}'
 
             if tmp_box_img != []:
@@ -793,10 +986,11 @@ class TableOCR:
             new_st = x + bonds[n][1]
 
         if new_st != len(hor_proj) - 1:
-            new_text_boxes.append([new_st, y, x + w - new_st, h])
-            tmp_box_img = box_img[0:h, new_st-x: w]
-            assert tmp_box_img != [], f'[0:h, new_st-x: w]: [0:{h}, {new_st-x}: {w}], box_img: {box_img.shape}, new_st: {new_st}, w: {w}'
-            new_box_imgs.append(tmp_box_img)
+            if x + w - new_st > 1 and h > 1:
+                new_text_boxes.append([new_st, y, x + w - new_st, h])
+                tmp_box_img = box_img[0:h, new_st-x: w]
+                assert tmp_box_img != [], f'[0:h, new_st-x: w]: [0:{h}, {new_st-x}: {w}], box_img: {box_img.shape}, new_st: {new_st}, w: {w}'
+                new_box_imgs.append(tmp_box_img)
 
         self.logger.debug(f'new_text_boxes: {new_text_boxes}')
 
