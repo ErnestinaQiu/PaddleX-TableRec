@@ -5,6 +5,7 @@ description: get ocr result from PaddleOCR repos
 import os
 import gc
 import cv2
+import math
 import random
 import pickle
 from copy import deepcopy
@@ -619,7 +620,7 @@ class TableOCR:
 
         return {'region': region, 'row_bounds': row_bounds, 'col_bounds': col_bounds}
 
-    def merge_and_split(self, regions: list, img: np.ndarray, iou_thresh=0.6):
+    def merge_and_split(self, regions: list, img: np.ndarray, iou_thresh=0.6, dis_thresh=1):
         """split regions into cells
 
         Args:
@@ -659,29 +660,47 @@ class TableOCR:
                 if len(boxes_rel[j]['same_cell']) == 0:
                     continue
                 repeat_guard = False
+                cur_box = text_boxes[int(j)]
+
+                # check repeat
                 for k in range(len(same_cells_indexes)):
                     if int(j) in same_cells_indexes[k]:
                         repeat_guard = True
-                        break
+                        continue
                 if repeat_guard:
                     continue
 
                 same_cell_idxs = boxes_rel[j]['same_cell']
+                checked_same_cell_idxes = []
+                for w in same_cell_idxs:
+                    tmp_box = text_boxes[w]
+                    dis = self.cal_box_dis(box1, tmp_box)
+                    if dis > dis_thresh:
+                        continue
+                    checked_same_cell_idxes.append(w)
+                same_cell_idxs = checked_same_cell_idxes
+
                 add_idxs = []
                 for idx in same_cell_idxs:
                     tmp_idxes = boxes_rel[str(idx)]['same_cell']
                     for _idx in tmp_idxes:
                         if _idx in same_cell_idxs:
                             continue
+                        tmp_box = text_boxes[_idx]
+                        dis = self.cal_box_dis(cur_box, tmp_box)
+                        if dis > dis_thresh:
+                            continue
                         add_idxs.append(idx)
                 complete_same_cell_idxs = same_cell_idxs + add_idxs + [int(j)]
+
+                if len(complete_same_cell_idxs) == 1:
+                    continue
                 same_cells_indexes.append(complete_same_cell_idxs)
 
             self.logger.info(f'same_cells_indexes: {same_cells_indexes}')
             # merge same cell
             cell_region_info = []         # [{'bound': [x1, y1, x2, y2], 'text_boxes_idxs': [], 'text_boxes': [x, y, w, h]}]
             deal_text_boxes_idxs = []
-            text_boxes_to_cell_region_map = {}
             for q in range(len(same_cells_indexes)):
                 cell_boxes_indexes = same_cells_indexes[q]
                 x1 = 1e5
@@ -691,15 +710,13 @@ class TableOCR:
                 same_cells_text_boxes = []
                 for p in cell_boxes_indexes:
                     tmp_x1, tmp_y1, tmp_w, tmp_h = text_boxes[p]
-                    same_cells_text_boxes.append(text_boxes[p])
                     tmp_x2 = tmp_x1 + tmp_w
                     tmp_y2 = tmp_y1 + tmp_h
                     x1 = min(x1, tmp_x1)
                     x2 = max(x2, tmp_x2)
                     y1 = min(y1, tmp_y1)
                     y2 = max(y2, tmp_y2)
-                    text_boxes_to_cell_region_map[str(p)] = q
-                cell_region_info.append({'bound': [x1, y1, x2, y2], 'box': [x1, y1, x2 - x1, y2 - y1], 'text_boxes_idxs': cell_boxes_indexes, 'text_boxes': text_boxes})
+                cell_region_info.append({'bound': [x1, y1, x2, y2], 'box': [x1, y1, x2 - x1, y2 - y1], 'text_boxes_idxs': cell_boxes_indexes, 'text_boxes': same_cells_text_boxes})
                 deal_text_boxes_idxs.extend(cell_boxes_indexes)
 
             self.logger.info(f'cell_region_info: {cell_region_info}')
@@ -741,7 +758,6 @@ class TableOCR:
                 if q in deal_text_boxes_idxs:
                     continue
                 _x, _y, _w, _h = text_boxes[q]
-                text_boxes_to_cell_region_map[q] = len(cell_region_info)
                 cell_region_info.append({'bound': [_x, _y, _x + _w, _y + _h], 'box': text_boxes[q], 'text_boxes_idxs': [q], 'text_boxes': [text_boxes[q]]})
 
             if len(cell_region_info) == 1:
@@ -809,8 +825,8 @@ class TableOCR:
                 for q in range(len(sorted_cell_region_info)):
                     tmp_cell_region = sorted_cell_region_info[q]
                     tmp_text_boxes = tmp_cell_region['text_boxes']
-                    new_x1 = 2e10
-                    new_y1 = 2e10
+                    new_x1 = 2e5
+                    new_y1 = 2e5
                     new_x2 = -1
                     new_y2 = -1
 
@@ -1320,8 +1336,28 @@ class TableOCR:
 
         return y
 
+    def cal_box_dis(self, box1: List, box2: List):
+        """calculate the Euclidean distance between core of box
+
+        Args:
+            box1 (List): [x1, y1, w1, h1]
+            box2 (List): [x2, y2, w2, h2]
+
+        Returns:
+            float: Euclidean distance
+        """
+        x1, y1, w1, h1 = box1
+        x2, y2, w2, h2 = box2
+        core_x1 = x1 + w1 / 2
+        core_y1 = y1 + h1 / 2
+        core_x2 = x2 + w2 / 2
+        core_y2 = y2 + h2 / 2
+        distance = math.sqrt((core_x2 - core_x1) ** 2 + (core_y2 - core_y1) ** 2)
+        return distance
+
 
 # Function to compute IoU between two rectangles, from paddlex\inference\pipelines\table_recognition\pipeline_v2.py
+
 def compute_iou(box1, box2):
     """
     Compute the Intersection over Union (IoU) between two rectangles.
