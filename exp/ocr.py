@@ -17,6 +17,8 @@ from paddlex import create_pipeline
 from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
 from paddlex.inference.pipelines.table_recognition.table_recognition_post_processing_v2 import sort_table_cells_boxes
 
+from exp_exist_label import draw_tables
+
 
 class TableOCR:
     def __init__(
@@ -128,13 +130,12 @@ class TableOCR:
 
         return shrink_boxes
 
-    def show_img(self, img: np.ndarray, sp: str = None):
-        if self.platform != 'aistudio':
+    def show_img(self, img: np.ndarray, sp: str = None, show=False):
+        if self.platform != 'aistudio' or show:
             cv2.imshow('Image', img)
-
-        # Wait for a key press and then close all windows
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+            # Wait for a key press and then close all windows
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
         if sp:
             cv2.imwrite(sp, img)
@@ -370,7 +371,6 @@ class TableOCR:
             if save_dir:
                 sp = os.path.join(save_dir, 'vis_blank_canvas.png')
             self.show_img(img=vis_blank_canvas, sp=sp)
-        self.logger.debug(f'canvas.shape: {canvas.shape}')
         return canvas
 
     def analysis_canvas(self, canvas: np.ndarray, save_dir: str=None):
@@ -483,7 +483,7 @@ class TableOCR:
 
         self.logger.debug(f'row_subgraphs: {row_subgraphs}\ncol_subgraphs: {col_subgraphs}\nregions: {regions}')
 
-        if self.logger_flag == INFO and img is not None:
+        if self.logger_flag == NOTSET and img is not None:
             from PIL import Image, ImageDraw, ImageFont
             region_canvas = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             region_img = region_canvas.copy()
@@ -623,8 +623,28 @@ class TableOCR:
 
         return {'region': region, 'row_bounds': row_bounds, 'col_bounds': col_bounds}
 
-    # TODO 1)expand the bound 2)deal empty cell inside
-    def merge_same_cells(self, regions: list, img: np.ndarray, iou_thresh=0.6, dis_thresh=25):
+    # TODO assign bounds and to correct wrong bounds use cv
+    def recheck_cells(self, regions: list, img: np.ndarray):
+        """check whether one region has more than one cell, if yes, split them. Assume every region only have one row
+
+        Args:
+            regions (list): [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1, ...]
+            img (np.ndarray): image
+
+        Raises:
+            ValueError: _description_
+
+        Returns:
+            list: [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1, ...]
+        """
+        new_regions = []
+        for i in range(len(regions)):
+            region_info = regions[i]
+
+
+
+    # TODO deal empty cell inside
+    def merge_same_cells_deal_complex_region(self, regions: list, img: np.ndarray, iou_thresh=0.6, dis_thresh=25):
         """merge same cell text ocr boxes, 
 
         Args:
@@ -732,7 +752,7 @@ class TableOCR:
 
             self.logger.debug(f'cell_region_info: {cell_region_info}')
 
-            if self.logger_flag == INFO and img is not None:
+            if self.logger_flag == NOTSET and img is not None:
                 from PIL import Image, ImageDraw
                 for _q in cell_region_info:
                     _region_canvas = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -803,196 +823,136 @@ class TableOCR:
                 new_regions_info.extend(cell_region_info)
                 continue
 
-            # consider the region and cell text box to generate the cell bound
-            self.
+            # deal complex region
+            cell_region_info = self.split_complex_region(cell_region_info=cell_region_info, bound=bound, img=img, iou_thresh=0.6)
 
-            # if self.logger_flag == INFO and img is not None:
-            #     from PIL import Image, ImageDraw
-            #     for _q in cell_region_info:
-            #         _region_canvas = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            #         _region_img = _region_canvas.copy()
-            #         random.seed(0)
-            #         draw_region_img = ImageDraw.Draw(_region_img)
-            #         color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-            #         _bound = _q['bound']
-            #         _region_pts = self.transform_x1y1x2y2_into_four_coordinates(_bound)
-            #         draw_region_img.polygon(_region_pts, fill=color)
-
-            #         _cell_text_boxes = _q['text_boxes']
-            #         _p = 0
-            #         color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-            #         for _p in range(len(_cell_text_boxes)):
-            #             _box = _cell_text_boxes[_p]
-            #             _pts = self.box_to_four_coordinates(box=_box)
-            #             draw_region_img.polygon(_pts, fill=color)
-
-            #         tmp_region_img = np.array(Image.blend(_region_canvas, _region_img, 0.5))
-            #         tmp_region_sp = None
-            #         if self.save_dir is not None:
-            #             tmp_region_sp = os.path.join(self.save_dir, f'merge_cell_big_region_{i}_cell_{q}.png')
-            #         self.show_img(img=tmp_region_img, sp=tmp_region_sp)
-            #         self.logger.info(f'finish merge cell region, out into {tmp_region_sp}')
-            #         del tmp_region_img
-            #         del _region_canvas
-            #         gc.collect()
             new_regions_info.extend(cell_region_info)
             continue
         return new_regions_info
 
-    def split_regions(self, cell_region_info: List, img: np.ndarray, iou_thresh=0.6):
+    def split_complex_region(self, cell_region_info: List, bound: List, img: np.ndarray, iou_thresh=0.6):
         """split complex region into cells
 
         Args:
             cell_region_info (List): [{'bound': [x1, y1, x2, y2], 'text_boxes': [x, y, w, h], 'empty_cell': 0, 'box': [x1, y1, x2, y2], 'text_boxes_idxs': cell_boxes_indexes}]
+            bound (List): bound of the complex region [x1, y1, x2, y2]
             img (np.ndarray): origin image
             iou_thresh (float, optional): _description_. Defaults to 0.6.
 
         Returns:
             new_regions_info (List): list of dict, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1, ...]
         """
-        for 
-            # analyze row
-            # #transform coordinate from absolute to relative
-            q = 0
-            inside_region_cell_boxes = []
-            for q in cell_region_info:
-                _x, _y, _x2, _y2 = q['bound']
-                _w = _x2 - _x
-                _h = _y2 - _y
-                inside_region_cell_boxes.append([_x - bound[0], _y - bound[1], _w, _h])
+        new_regions_info = []    # the same structure as cell_region_info
+        # analyze row
+        # #transform coordinate from absolute to relative
+        q = 0
+        inside_region_cell_boxes = []
+        for q in cell_region_info:
+            _x, _y, _x2, _y2 = q['bound']
+            _w = _x2 - _x
+            _h = _y2 - _y
+            inside_region_cell_boxes.append([_x - bound[0], _y - bound[1], _w, _h])
 
-            img_shape = img[bound[1]:bound[3], bound[0]:bound[2]].shape
-            inside_region_canvas = self.ocr_box_canvas(text_boxes=inside_region_cell_boxes, img_shape=img_shape)
+        img_shape = img[bound[1]:bound[3], bound[0]:bound[2]].shape
+        inside_region_canvas = self.ocr_box_canvas(text_boxes=inside_region_cell_boxes, img_shape=img_shape)
 
-            row_subgraphs = self.row_analyse(canvas=inside_region_canvas)
-            # #transform coordinate from relative to absolute
-            q = 0
+        if self.logger_flag == NOTSET:
+            self.show_img(img=inside_region_canvas * 255, show=True)
+
+        row_subgraphs = self.row_analyse(canvas=inside_region_canvas)
+        self.logger.debug(f'row_subgraphs: {row_subgraphs}')
+        # #transform coordinate from relative to absolute
+        q = 0
+        for q in row_subgraphs.keys():
+            row_subgraphs[q]['scope'] = [row_subgraphs[q]['scope'][0] + bound[1], row_subgraphs[q]['scope'][1] + bound[1]]
+
+        # case 1
+        if len(row_subgraphs) == 1:
+            sorted_cell_region_info = list(sorted(cell_region_info, key=lambda x: x["bound"][0]))
+            # fresh bound
+            new_bound_cell_region_info = self.fresh_bound(sorted_cell_region_info=sorted_cell_region_info, bound=bound)
+            new_regions_info.extend(new_bound_cell_region_info)
+
+            if self.logger_flag == NOTSET:
+                _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in new_regions_info]
+                case1_table = draw_tables(img, _pts)
+                self.show_img(case1_table, show=True)
+            return new_regions_info
+        else:
+            # split rows
+            for p in row_subgraphs.keys():
+                subgraph_scope = row_subgraphs[p]['scope']
+                row_subgraphs[p]['cells_info'] = []   # [{'cell_idx': int, 'bound': [x1, y1, x2, y2], 'cell_box': [x, y, w, h], 'text_boxes_idxs': list of int|indexes of text boxes which belong to the same cell, 'text_boxes': []}]
+                row_subgraphs[p]['bound'] = [bound[0], subgraph_scope[0], bound[2], subgraph_scope[1]]
+                for q in range(len(cell_region_info)):
+                    cell_bound = cell_region_info[q]['bound']
+                    x, y, x1, y1 = cell_bound
+                    h = y1 - y
+                    if y >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                        row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
+                    elif y + h <= subgraph_scope[0] or y >= subgraph_scope[1]:
+                        pass
+                    else:
+                        iou = 0
+                        if y >= subgraph_scope[0] and y < subgraph_scope[1] and y + h > subgraph_scope[1]:
+                            iou = round((subgraph_scope[1] - y) / h, 2)
+                        elif y < subgraph_scope[0] and y + h > subgraph_scope[0] and y + h <= subgraph_scope[1]:
+                            iou = round((y + h - subgraph_scope[0]) / h, 2)
+                        elif y <= subgraph_scope[0] and y + h >= subgraph_scope[1]:
+                            iou = round((subgraph_scope[1] - subgraph_scope[0]) / h, 2)
+                        if iou >= iou_thresh:
+                            row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
+
+            if self.logger_flag == NOTSET:
+                _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in row_subgraphs[p]['cells_info']]
+                case1_table = draw_tables(img, _pts)
+                self.show_img(case1_table, show=True)
+
+            # get new split cells
             for q in row_subgraphs.keys():
-                row_subgraphs[q]['scope'] = [row_subgraphs[q]['scope'][0] + bound[1], row_subgraphs[q]['scope'][1] + bound[1]]
+                tmp_row_info = row_subgraphs[q]
+                if len(tmp_row_info['cells_info']) == 1:
+                    tmp_row_info['cells_info'][0]['bound'] = tmp_row_info['bound']
+                    new_regions_info.append(tmp_row_info['cells_info'][0])
 
-            # case 1
-            if len(row_subgraphs) == 1:
-                sorted_cell_region_info = list(sorted(cell_region_info, key=lambda x: x["bound"][0]))
-                new_regions_info.extend(sorted_cell_region_info)
-
-                # fresh bound
-                new_split_cell_info = []
-
-                q = 0
-                for q in range(len(sorted_cell_region_info)):
-                    tmp_cell_region = sorted_cell_region_info[q]
-                    tmp_text_boxes = tmp_cell_region['text_boxes']
-                    new_x1 = 2e5
-                    new_y1 = 2e5
-                    new_x2 = -1
-                    new_y2 = -1
-
-                    for box in tmp_text_boxes:
-                        bx, by, bw, bh = box
-                        new_x1 = min(new_x1, bx)
-                        new_x2 = max(new_x2, bx + bw)
-                        new_y1 = min(new_y1, by)
-                        new_y2 = max(new_y2, by + bh)
-
-                    # if q == 0:
-                    #     new_x1 = bound[0]
-                    # elif q == len(sorted_cell_region_info) - 1:
-                    #     new_x2 = bound[2]
-                    tmp_cell_region['bound'] = [new_x1, new_y1, new_x2, new_y2]
-                    new_split_cell_info.append(tmp_cell_region)
-
-                new_regions_info.extend(new_split_cell_info)
-                continue
-            else:
-                # split rows
-                p = 0
-                q = 0
-                m = 0
-                for p in row_subgraphs.keys():
-                    subgraph_scope = row_subgraphs[p]['scope']
-                    row_subgraphs[p]['cells_info'] = []   # [{'cell_idx': int, 'cell_bound': [x1, y1, x2, y2], 'cell_box': [x, y, w, h], 'text_boxes_idxs': list of int|indexes of text boxes which belong to the same cell, 'text_boxes': []}]
-                    row_subgraphs[p]['bound'] = [bound[0], subgraph_scope[0], bound[2], subgraph_scope[1]]
-                    for q in range(len(cell_region_info)):
-                        cell_bound = cell_region_info[q]['bound']
-                        x, y, x1, y1 = cell_bound
-                        h = y1 - y
-                        if y >= subgraph_scope[0] and y + h <= subgraph_scope[1]:
-                            row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'cell_bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
-                        elif y + h <= subgraph_scope[0] or y >= subgraph_scope[1]:
-                            pass
-                        else:
-                            iou = 0
-                            if y >= subgraph_scope[0] and y < subgraph_scope[1] and y + h > subgraph_scope[1]:
-                                iou = round((subgraph_scope[1] - y) / h, 2)
-                            elif y < subgraph_scope[0] and y + h > subgraph_scope[0] and y + h <= subgraph_scope[1]:
-                                iou = round((y + h - subgraph_scope[0]) / h, 2)
-                            elif y <= subgraph_scope[0] and y + h >= subgraph_scope[1]:
-                                iou = round((subgraph_scope[1] - subgraph_scope[0]) / h, 2)
-                            if iou >= iou_thresh:
-                                row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'cell_bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
-
-                # get new split cells
-                for q in row_subgraphs.keys():
-                    tmp_row_info = row_subgraphs[q]
-                    if len(tmp_row_info['cells_info']) == 1:
-                        new_regions_info.append(tmp_row_info)
-                        continue
-                    row_subgraphs[p]['cells_info'] = list(sorted(tmp_row_info['cells_info'], key=lambda x: x["cell_bound"][0]))
-                    scope = row_subgraphs[p]['scope']
-                    row_cells_info = row_subgraphs[p]['cells_info']
-
-                    # refresh the bound
-                    new_split_row_cell_info = []
-                    for q in range(len(row_cells_info)):
-                        cell_info = row_cells_info[q]
-                        text_boxes = cell_info['text_boxes']
-                        new_x1 = 5e10
-                        new_x2 = -1
-                        new_y1 = 5e10
-                        new_y2 = -1
-                        for box in text_boxes:
-                            bx, by, bw, bh = box
-                            new_x1 = min(new_x1, bx)
-                            new_y1 = min(new_y1, by)
-                            new_x2 = max(new_x2, bx + bw)
-                            new_y2 = max(new_y2, by + bh)
-                        # if q == 0:
-                        #     new_x1 = bound[0]
-                        # elif q == len(row_cells_info) - 1:
-                        #     new_x2 = bound[1]
-                        cell_info['bound'] = [new_x1, new_y1, new_x2, new_y2]
-                        new_split_row_cell_info.append(cell_info)
-
-                    # new_split_cell_info.append(new_split_row_cell_info)
-                    new_regions_info.extend(new_split_row_cell_info)
+                    if self.logger_flag == NOTSET:
+                        _pts = [self.transform_x1y1x2y2_into_four_coordinates(tmp_row_info['bound'])]
+                        case1_table = draw_tables(img, _pts)
+                        self.show_img(case1_table, show=True)
                     continue
+                row_subgraphs[p]['cells_info'] = list(sorted(tmp_row_info['cells_info'], key=lambda x: x["bound"][0]))
+                # scope = row_subgraphs[p]['scope']
+                # row_bound = (row_subgraphs[p]['bound'][0], scope[0], row_subgraphs[p]['bound'][1], scope[1])
+                row_bound = row_subgraphs[p]['bound']
+                row_cells_info = row_subgraphs[p]['cells_info']
 
-            # transform text boxes rel
-            # cells_rel = {}
-            # q = 0
-            # n = 0
-            # m = 0
-            # for q in boxes_rel.keys():
-            #     rel = boxes_rel[str(q)]
-            #     cell_idx = text_boxes_to_cell_region_map[q]
-            #     same_row = []
-            #     for n in rel['same_row']:
-            #         same_row.append(text_boxes_to_cell_region_map[str(n)])
-            #     same_col = []
-            #     for m in rel['same_col']:
-            #         same_col.append(text_boxes_to_cell_region_map[str(m)])
-            #     if cell_idx not in cells_rels.keys():
-            #         cells_rel[str(cell_idx)] = {'same_row': same_row, 'same_col': same_col}
-            #     else:
-            #         n = 0
-            #         for n in same_row:
-            #             if n not in cells_rel[str(cell_idx)]['same_row']:
-            #                 cells_rel[str(cell_idx)]['same_row'].append(n)
-            #         m = 0
-            #         for m in same_col:
-            #             if m not in cells_rel[str(cell_idx)]['same_col']:
-            #                 cells_rel[str(cell_idx)]['same_col'].append(m)
+                # refresh the bound
+                new_split_row_cell_info = self.fresh_bound(sorted_cell_region_info=row_cells_info, bound=row_bound)
+                new_regions_info.extend(new_split_row_cell_info)
+                continue
+
+        if self.logger_flag == NOTSET:
+            _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in new_regions_info]
+            case1_table = draw_tables(img, _pts)
+            self.show_img(case1_table, show=True)
+
         return new_regions_info
+
+    def fresh_bound(self, sorted_cell_region_info, bound):
+        q = 0
+        x_st = bound[0]
+        new_bound_cell_region_info = []
+        for q in range(len(sorted_cell_region_info) - 1):
+            cur_bound = sorted_cell_region_info[q]['bound']
+            next_bound = sorted_cell_region_info[q + 1]['bound']
+            x_ed = 0.5 * (cur_bound[2] + next_bound[0])
+            sorted_cell_region_info[q]['bound'] = [x_st, bound[1], x_ed, bound[3]]
+            new_bound_cell_region_info.append(sorted_cell_region_info[q])
+            x_st = x_ed
+
+        sorted_cell_region_info[-1]['bound'] = [x_st, bound[1], bound[2], bound[3]]
+        new_bound_cell_region_info.append(sorted_cell_region_info[-1])
+        return new_bound_cell_region_info
 
     def row_analyse(self, canvas: np.ndarray):
         row_proj = []
@@ -1168,7 +1128,7 @@ class TableOCR:
 
         subgraphs = {'row': row_subgraphs, 'col': col_subgraphs}
 
-        if self.logger_flag == INFO and img is not None:
+        if self.logger_flag == NOTSET and img is not None:
             from PIL import Image, ImageDraw, ImageFont
             # row
             i = 0
@@ -1435,7 +1395,6 @@ class TableOCR:
 
 
 def euclidean_distance(point1, point2):
-
     """Calculate the Euclidean distance between two points
     Args:
         point1 (Tuple|List|Array): (x1, y1)
