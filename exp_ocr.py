@@ -7,7 +7,7 @@ import cv2
 import yaml
 import json
 import logging
-from exp.ocr import TableOCR, compute_iou
+from exp.ocr import TableOCR, compute_iou_cal_metrics
 from exp_exist_label import check_and_read
 from paddlex.utils.config import parse_config
 from paddlex import create_pipeline
@@ -122,12 +122,12 @@ def test_split_into_groups(img_path, platform, save_dir=None):
     table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
 
 
-def test_split_and_merge_data_dir(data_img_dir, platform, save_dir=None):
-    table_ocr = TableOCR(platform=platform, save_dir=None)
+def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
+    table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.INFO)
     for img_name in os.listdir(data_img_dir):
         img_path = os.path.join(data_img_dir, img_name)
         img_base_name = os.path.basename(img_path).split('.')[0]
-        save_img_dir = os.path.join(save_dir, 'split_and_merge', img_base_name)
+        save_img_dir = os.path.join(save_dir, 'deal_big_region_frame', img_base_name)
         os.makedirs(save_img_dir, exist_ok=True)
         table_ocr.save_dir = save_img_dir
         img = table_ocr.check_and_read_img(img_path=img_path)
@@ -158,35 +158,55 @@ def test_split_and_merge_data_dir(data_img_dir, platform, save_dir=None):
         table_ocr.show_img(canvas, sp=canvas_sp)
 
         regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+        regions_info = table_ocr.deal_big_region_frame(region=regions, img_shape=img.shape)
+        modify_frame_regions = regions_info['region']
 
         region_pts_poly = []
-        for d in regions:
+        for d in modify_frame_regions:
             pts = table_ocr.transform_x1y1x2y2_into_four_coordinates(d['bound'])
             region_pts_poly.append(pts)
         region_table = draw_tables(img=img, boxes=region_pts_poly)
-        print(f'regions: {regions}\n')
+
         if save_dir is not None:
             sp = os.path.join(save_img_dir, 'region_table.png')
         else:
             sp = None
         table_ocr.show_img(region_table, sp=sp)
 
-        new_regions = table_ocr.merge_and_split(regions=regions, img=img)
+        # plot big region frame
+        row_bounds = regions_info['row_bounds']
+        col_bounds = regions_info['col_bounds']
+        big_frame_img = img.copy()
+        for p in range(len(row_bounds)):
+            big_frame_img[row_bounds[p], col_bounds[0]: col_bounds[-1]] = 125
+        for q in range(len(col_bounds)):
+            big_frame_img[row_bounds[0]: row_bounds[-1], col_bounds[q]] = 125
+
+        if save_dir is not None:
+            sp = os.path.join(save_img_dir, 'big_frame_table.png')
+        else:
+            sp = None
+        table_ocr.show_img(big_frame_img, sp=sp)
+
+        new_regions_info = table_ocr.merge_and_split(regions=regions, img=img)
         region_pts_poly = []
-        for bound in new_regions:
+        for k in range(len(new_regions_info)):
+            bound = new_regions_info[k]['bound']
             if bound is None:
                 continue
             pts = table_ocr.transform_x1y1x2y2_into_four_coordinates(bound)
             region_pts_poly.append(pts)
         new_region_table = draw_tables(img=img, boxes=region_pts_poly)
-        print(f'new regions: {new_regions}')
+
         if save_dir is not None:
             sp = os.path.join(save_img_dir, 'new_region_table.png')
         else:
             sp = None
         table_ocr.show_img(new_region_table, sp=sp)
+
         print(f'out into {sp}')
 
+        break
 
 def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=None):
     log_dir = './output/exp/TableOcr'
@@ -240,12 +260,12 @@ def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=
     index_logger.info(f'test_indexes: {test_indexes}')
 
 
-def test_split_and_merge_index_one_to_one(data_dir, platform, save_dir=None, iou_thresh=0.8):
-    log_dir = './output/exp/TableOcr'
-    os.makedirs(log_dir, exist_ok=True)
-    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(log_dir, 'test_indexes.log'), log_level=logging.DEBUG)
+def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.8):
+    save_dir = './output/exp/deal_big_region_frame'
+    os.makedirs(save_dir, exist_ok=True)
+    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(save_dir, 'test_indexes.log'), log_level=logging.DEBUG)
 
-    table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.ERROR)
+    table_ocr = TableOCR(platform=platform, save_dir=save_dir, log_level=logging.INFO)
     test_indexes = {'total_cells': 0, 'correct_cells': 0, 'total_pred_cells': 0, 'recall': 0, 'precision': 0}  # correct cells meet the requirements where the iou > iou_thresh
 
     imgs_dir = os.path.join(data_dir, "images")
@@ -269,6 +289,8 @@ def test_split_and_merge_index_one_to_one(data_dir, platform, save_dir=None, iou
         canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
         canvas = canvas * 255
         regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+        # regions_info = table_ocr.deal_big_region_frame(region=regions, img_shape=img.shape)
+        # regions = regions_info['region']
         new_regions = table_ocr.merge_and_split(regions=regions, img=img)
 
         test_indexes['total_pred_cells'] += len(regions)
@@ -287,21 +309,23 @@ def test_split_and_merge_index_one_to_one(data_dir, platform, save_dir=None, iou
         test_indexes['precision'] = test_indexes['correct_cells'] / test_indexes['total_pred_cells']
         index_logger.debug(f'test_indexes: {test_indexes}')
 
-    test_indexes['recall'] = test_indexes['correct_cells'] / test_indexes['total']
+    test_indexes['recall'] = test_indexes['correct_cells'] / test_indexes['total_cells']
     test_indexes['precision'] = test_indexes['correct_cells'] / test_indexes['total_pred_cells']
 
     index_logger.info(f'test_indexes: {test_indexes}')
 
 
 def cal_metrics(gt_cell_bound, pred_bounds, iou_thresh):
+
     count = 0
     for bound in pred_bounds:
-        iou = compute_iou(box1=bound, box2=gt_cell_bound)
+        iou = compute_iou_cal_metrics(box1=bound, box2=gt_cell_bound)
         if iou >= iou_thresh:
             count += 1
     if count == 1:
         return 1
     return 0
+
 
 def test_my_ocr_img_dir(img_dir, save_dir=None):
     table_ocr = TableOCR()
@@ -368,4 +392,5 @@ if __name__ == "__main__":
     # test_split_and_merge_data_dir(data_img_dir=img_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'split_into_region'))
 
     # test_split_and_merge_index_iou(data_dir=data_dir, platform='aistudio', iou_thresh=0.5)
-    test_split_and_merge_index_one_to_one(data_dir=data_dir, platform='aistudio', iou_thresh=0.8)
+    # test_deal_big_region_frame(data_dir=data_dir, platform='aistudio', iou_thresh=0.5)
+    analyse_deal_big_region_frame(data_img_dir=img_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'deal_big_region_frame'))

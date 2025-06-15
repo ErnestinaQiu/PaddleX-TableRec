@@ -143,6 +143,112 @@ class TiesDataSet(IterableDataset):
 
         yield {'images': images, 'cell_boxes': cell_boxes, "ocr_res_boxes": ocr_res_boxes, "cell_adj_mats": cell_adj_mats, "row_adj_mats": row_adj_mats, "col_adj_mats": col_adj_mats}
 
+    def cell_gen(self):
+        """For model training
+        Returns:
+            dict:  {"images": paddle.Tensor|(b, c, h, w),
+                    "text_boxes": list|[[text boxes in one image], [...]],
+                    "ocr_res_boxes": list|[[ocr result boxes in one image]],
+                    "cell_adj_mat": paddle.Tensor|(b, max_vertices, max_vertices),
+                    "row_adj_mat": paddle.Tensor|(b, max_vertices, max_vertices),
+                    "col_adj_mat": paddle.Tensor|(b, max_vertices, max_vertices),
+                    }
+                    images with shape as [batch, channel, width, height],
+                    text_box with shape [x1, y1, x2, y2]
+        """
+        random.seed(self.seed)
+        while True:
+            imgs_info, anns = self.get_info()
+            images = []
+            cell_boxes = []
+            ocr_res_boxes = []
+            cell_adj_mats = []
+            row_adj_mats = []
+            col_adj_mats = []
+            batch_cell_rels = []
+            batch_res_boxes_rels = []
+            i = 0
+            while i <= self.num_samples:
+                chosen_img_info = imgs_info[random.choice(range(len(imgs_info)))]
+                img_id = chosen_img_info['id']
+                file_name = chosen_img_info['file_name']
+                img_path = os.path.join(self.imgs_dir, file_name)
+
+                img = self.check_and_read(img_path=img_path)
+                boxes = []                     # [x, y, w, h]
+                new_format_cell_boxes = []          # [x1, y1, x2, y2]
+                for j in range(len(anns)):
+                    ann = anns[j]
+                    if ann['image_id'] != img_id:
+                        continue
+                    boxes.append(ann['bbox'])
+                    x, y, w, h = ann['bbox']
+                    new_format_cell_boxes.append([x, y, x + w, y + h])
+
+                # get norm image tensor
+                ratio, norm_img, norm_cell_boxes = self.scale(img=img, text_boxes=boxes, target_width=self.normalized_width, target_height=self.normalized_height)
+                norm_img = np.transpose(norm_img, (2, 0, 1))
+                norm_img_tensor = np.ones(shape=(img.shape[2], self.normalized_height, self.normalized_width)) * 255
+                norm_img_tensor[:, :norm_img.shape[1], :norm_img.shape[2]] = norm_img[:, :, :]
+
+                # get relation matrix of ocr result boxes
+                cells_rel = self.get_cells_relations(boxes=new_format_cell_boxes)
+
+                batch_cell_rels.append(cells_rel)
+
+                res_boxes = self.table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+                # get relations among ocr result boxes
+                res_box_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
+
+                # count cell samples
+                cell_rel_count = 0
+                for q in res_box_rel.keys():
+                    rel = res_box_rel[q]
+                    if len(rel['same_cell']) > 0:
+                        cell_rel_count += 1
+
+                if cell_rel_count == 0:
+                    continue
+
+                batch_res_boxes_rels.append(res_box_rel)
+
+                # scale ocr res boxes
+                norm_res_boxes = self.scale_by_ratio(boxes=res_boxes, ratio=ratio)
+
+                images.append(norm_img_tensor)
+                cell_boxes.append(norm_cell_boxes)
+                ocr_res_boxes.append(norm_res_boxes)
+
+                cell_adj_mat = np.zeros(shape=(self.max_vertices, self.max_vertices), dtype=np.int8)
+                row_adj_mat = np.zeros(shape=(self.max_vertices, self.max_vertices), dtype=np.int8)
+                col_adj_mat = np.zeros(shape=(self.max_vertices, self.max_vertices), dtype=np.int8)
+                for k in res_box_rel.keys():
+                    same_cell_idxs = res_box_rel[k]['same_cell']
+                    for m in same_cell_idxs:
+                        cell_adj_mat[int(k), int(m)] = 1
+
+                    same_row_idxs = res_box_rel[k]['same_row']
+                    for n in same_row_idxs:
+                        row_adj_mat[int(k), int(n)] = 1
+
+                    same_col_idxs = res_box_rel[k]['same_col']
+                    for l in same_col_idxs:
+                        col_adj_mat[int(k), int(l)] = 1
+
+                cell_adj_mats.append(cell_adj_mat)
+                row_adj_mats.append(row_adj_mat)
+                col_adj_mats.append(col_adj_mat)
+
+                i += 1
+
+            images = paddle.to_tensor(images, dtype=paddle.float32)
+            cell_adj_mats = paddle.to_tensor(data=cell_adj_mats, dtype=paddle.float32)
+            row_adj_mats = paddle.to_tensor(data=row_adj_mats, dtype=paddle.float32)
+            col_adj_mats = paddle.to_tensor(data=col_adj_mats, dtype=paddle.float32)
+
+            yield {'images': images, 'cell_boxes': cell_boxes, "ocr_res_boxes": ocr_res_boxes, "cell_adj_mats": cell_adj_mats, "row_adj_mats": row_adj_mats, "col_adj_mats": col_adj_mats}
+
     def __getitem__(self, idx: int):
         """return origin image and cell boxes belong to the index
 
