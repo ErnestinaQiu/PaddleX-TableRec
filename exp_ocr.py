@@ -158,6 +158,18 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
         table_ocr.show_img(canvas, sp=canvas_sp)
 
         regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+        region_pts_poly = []
+        for d in regions:
+            pts = table_ocr.transform_x1y1x2y2_into_four_coordinates(d['bound'])
+            region_pts_poly.append(pts)
+        region_table = draw_tables(img=img, boxes=region_pts_poly)
+
+        if save_dir is not None:
+            sp = os.path.join(save_img_dir, 'region_table.png')
+        else:
+            sp = None
+        table_ocr.show_img(region_table, sp=sp)
+
         regions_info = table_ocr.deal_big_region_frame(region=regions, img_shape=img.shape)
         modify_frame_regions = regions_info['region']
 
@@ -168,7 +180,7 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
         region_table = draw_tables(img=img, boxes=region_pts_poly)
 
         if save_dir is not None:
-            sp = os.path.join(save_img_dir, 'region_table.png')
+            sp = os.path.join(save_img_dir, 'modify_frame_region_table.png')
         else:
             sp = None
         table_ocr.show_img(region_table, sp=sp)
@@ -188,7 +200,7 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
             sp = None
         table_ocr.show_img(big_frame_img, sp=sp)
 
-        new_regions_info = table_ocr.merge_and_split(regions=regions, img=img)
+        new_regions_info = table_ocr.merge_same_cells(regions=regions, img=img)
         region_pts_poly = []
         for k in range(len(new_regions_info)):
             bound = new_regions_info[k]['bound']

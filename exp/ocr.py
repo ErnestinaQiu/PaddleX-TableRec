@@ -415,7 +415,7 @@ class TableOCR:
             plt.close()        
 
     def split_into_region(self, canvas: np.ndarray, text_boxes: List, img: np.ndarray = None, iou_thresh=0.8):
-        """ split text boxes into region cell
+        """ split text boxes into region cell, detect empty cell inside
 
         Args:
             canvas (np.ndarray): blank matrix with text box as 1
@@ -537,11 +537,14 @@ class TableOCR:
         elif mode == 'col':
             range_scope = bin_canvas.shape[1]
 
+        proj_values = []  # debug param
         for i in range(range_scope):
             if mode == 'row':
                 proj = np.sum(bin_canvas[i, :])
             elif mode == 'col':
                 proj = np.sum(bin_canvas[:, i])
+
+            proj_values.append(proj)
             # start st point
             if proj != 0 and margin_st == -1:
                 if i == 0:
@@ -570,7 +573,7 @@ class TableOCR:
 
         return margin_bounds
 
-    # repeat function of split into groups
+    # repeat method of split into region
     def deal_big_region_frame(self, region: List, img_shape: Tuple):
         """use info of region to generate frame, and then use the frame to add empty cell into region and modify region bound into cell bound
            use after method split_into_region
@@ -588,7 +591,7 @@ class TableOCR:
         region_boxes = []
         for d in region:
             x1, y1, x2, y2 = d['bound']
-            region_boxes.append([x1, y1, x2 - x1, y2 - x1])
+            region_boxes.append([x1, y1, x2 - x1, y2 - y1])
         canvas = self.ocr_box_canvas(region_boxes, img_shape=img_shape)
 
         # get row bound
@@ -620,12 +623,14 @@ class TableOCR:
 
         return {'region': region, 'row_bounds': row_bounds, 'col_bounds': col_bounds}
 
-    def merge_and_split(self, regions: list, img: np.ndarray, iou_thresh=0.6, dis_thresh=1):
-        """split regions into cells
+    # TODO 1)expand the bound 2)deal empty cell inside
+    def merge_same_cells(self, regions: list, img: np.ndarray, iou_thresh=0.6, dis_thresh=25):
+        """merge same cell text ocr boxes, 
 
         Args:
             regions (List): list of group of text boxes, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1}, ...]
             img (np.ndarray): image
+
         Returns:
             new_regions_info (List): list of dict, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1, ...]
         """
@@ -652,16 +657,20 @@ class TableOCR:
                     elif rel == 2:
                         boxes_rel[str(n)]['same_col'].append(m)
                     elif rel == 3:
-                        continue
+                        pass
+                    if rel != 0:
+                        dis, _ = self.cal_box_dis(box1, box2)
+                        if dis < 0.05 * dis_thresh:
+                            boxes_rel[str(n)]['same_cell'].append(m)
 
             # same cell merge
             same_cells_indexes = []
             for j in boxes_rel.keys():
                 if len(boxes_rel[j]['same_cell']) == 0:
                     continue
+
                 repeat_guard = False
                 cur_box = text_boxes[int(j)]
-
                 # check repeat
                 for k in range(len(same_cells_indexes)):
                     if int(j) in same_cells_indexes[k]:
@@ -674,7 +683,7 @@ class TableOCR:
                 checked_same_cell_idxes = []
                 for w in same_cell_idxs:
                     tmp_box = text_boxes[w]
-                    dis = self.cal_box_dis(box1, tmp_box)
+                    dis, _ = self.cal_box_dis(cur_box, tmp_box)
                     if dis > dis_thresh:
                         continue
                     checked_same_cell_idxes.append(w)
@@ -687,7 +696,7 @@ class TableOCR:
                         if _idx in same_cell_idxs:
                             continue
                         tmp_box = text_boxes[_idx]
-                        dis = self.cal_box_dis(cur_box, tmp_box)
+                        dis, _ = self.cal_box_dis(cur_box, tmp_box)
                         if dis > dis_thresh:
                             continue
                         add_idxs.append(idx)
@@ -697,8 +706,8 @@ class TableOCR:
                     continue
                 same_cells_indexes.append(complete_same_cell_idxs)
 
-            self.logger.info(f'same_cells_indexes: {same_cells_indexes}')
-            # merge same cell
+            self.logger.debug(f'same_cells_indexes: {same_cells_indexes}')
+            # merge same cell text boxes
             cell_region_info = []         # [{'bound': [x1, y1, x2, y2], 'text_boxes_idxs': [], 'text_boxes': [x, y, w, h]}]
             deal_text_boxes_idxs = []
             for q in range(len(same_cells_indexes)):
@@ -716,10 +725,12 @@ class TableOCR:
                     x2 = max(x2, tmp_x2)
                     y1 = min(y1, tmp_y1)
                     y2 = max(y2, tmp_y2)
-                cell_region_info.append({'bound': [x1, y1, x2, y2], 'box': [x1, y1, x2 - x1, y2 - y1], 'text_boxes_idxs': cell_boxes_indexes, 'text_boxes': same_cells_text_boxes})
+
+                merged_cell_info = {'bound': (x1, y1, x2, y2), 'box': [x1, y1, x2 - x1, y2 - y1], 'text_boxes_idxs': cell_boxes_indexes, 'text_boxes': same_cells_text_boxes, 'empty_cell': 0}
+                cell_region_info.append(merged_cell_info)
                 deal_text_boxes_idxs.extend(cell_boxes_indexes)
 
-            self.logger.info(f'cell_region_info: {cell_region_info}')
+            self.logger.debug(f'cell_region_info: {cell_region_info}')
 
             if self.logger_flag == INFO and img is not None:
                 from PIL import Image, ImageDraw
@@ -751,18 +762,49 @@ class TableOCR:
                     del _region_canvas
                     gc.collect()
 
-            # get new cell relation map after cell merge, because the original relation is predict by text boxes
-            q = 0
-            p = 0
+            # deal the remained text_boxes
             for q in range(len(text_boxes)):
                 if q in deal_text_boxes_idxs:
                     continue
                 _x, _y, _w, _h = text_boxes[q]
-                cell_region_info.append({'bound': [_x, _y, _x + _w, _y + _h], 'box': text_boxes[q], 'text_boxes_idxs': [q], 'text_boxes': [text_boxes[q]]})
+                text_bound = (_x, _y, _x + _w, _y + _h)
+                cell_region_info.append({'bound': text_bound, 'box': text_boxes[q], 'text_boxes_idxs': [q], 'text_boxes': [text_boxes[q]], 'empty_cell': 0})
+
+            # deal overlap
+            deal_overlap_cell_region = []
+            overlap_indexes = []
+            for a in range(len(cell_region_info)):
+                bound_a = cell_region_info[a]['bound']
+                if a in overlap_indexes:
+                    continue
+                append_guard = True
+                for b in range(a + 1, len(cell_region_info)):
+                    if b in overlap_indexes:
+                        continue
+                    bound_b = cell_region_info[b]['bound']
+                    iou = max(compute_iou(bound_a, bound_b), compute_iou(bound_b, bound_a))
+                    if iou > 0.3:
+                        overlap_indexes.append(b)
+                        cell_region_info[a]['text_boxes'].extend(cell_region_info[b]['text_boxes'])
+                        new_bound = (min(bound_a[0], bound_b[0]), min(bound_a[1], bound_b[1]), max(bound_a[2], bound_b[2]), max(bound_b[3], bound_a[3]))
+                        new_text_boxes_idxs = cell_region_info[a]['text_boxes_idxs'].extend(cell_region_info[b]['text_boxes_idxs'])
+                        new_text_boxes = cell_region_info[a]['text_boxes'].extend(cell_region_info[b]['text_boxes'])
+                        new_cell_region = {'bound': new_bound, 'box': (new_bound[0], new_bound[1], new_bound[2] - new_bound[0], new_bound[3] - new_bound[1]), 'text_boxes_idxs': new_text_boxes_idxs, 'new_text_boxes': new_text_boxes, 'empty_cell': 0}
+                        deal_overlap_cell_region.append(new_cell_region)
+                        append_guard = False
+                        continue
+                if append_guard:
+                    deal_overlap_cell_region.append(cell_region_info[a])
+
+            cell_region_info = deal_overlap_cell_region
 
             if len(cell_region_info) == 1:
+                cell_region_info[0]['bound'] = bound
                 new_regions_info.extend(cell_region_info)
                 continue
+
+            # consider the region and cell text box to generate the cell bound
+            self.
 
             # if self.logger_flag == INFO and img is not None:
             #     from PIL import Image, ImageDraw
@@ -793,7 +835,22 @@ class TableOCR:
             #         del tmp_region_img
             #         del _region_canvas
             #         gc.collect()
+            new_regions_info.extend(cell_region_info)
+            continue
+        return new_regions_info
 
+    def split_regions(self, cell_region_info: List, img: np.ndarray, iou_thresh=0.6):
+        """split complex region into cells
+
+        Args:
+            cell_region_info (List): [{'bound': [x1, y1, x2, y2], 'text_boxes': [x, y, w, h], 'empty_cell': 0, 'box': [x1, y1, x2, y2], 'text_boxes_idxs': cell_boxes_indexes}]
+            img (np.ndarray): origin image
+            iou_thresh (float, optional): _description_. Defaults to 0.6.
+
+        Returns:
+            new_regions_info (List): list of dict, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1, ...]
+        """
+        for 
             # analyze row
             # #transform coordinate from absolute to relative
             q = 0
@@ -1175,7 +1232,7 @@ class TableOCR:
         return subgraphs
 
     def modify_text_boxes(self, text_box: List, box_img: np.ndarray):
-        """correct the results of ocr det model 
+        """correct the results of ocr det model
 
         Args:
             text_boxes (List): the text boxes,  [x, y, w, h]
@@ -1345,19 +1402,52 @@ class TableOCR:
 
         Returns:
             float: Euclidean distance
+
+            Tuple: closest point pair
         """
-        x1, y1, w1, h1 = box1
-        x2, y2, w2, h2 = box2
-        core_x1 = x1 + w1 / 2
-        core_y1 = y1 + h1 / 2
-        core_x2 = x2 + w2 / 2
-        core_y2 = y2 + h2 / 2
-        distance = math.sqrt((core_x2 - core_x1) ** 2 + (core_y2 - core_y1) ** 2)
-        return distance
+        # pts on box1
+        row_samples = np.linspace(box1[1], box1[1] + box1[3], num=4)
+        col_samples = np.linspace(box1[0], box1[0] + box1[2], num=4)
+        pts1 = []
+        for i in row_samples:
+            for j in col_samples:
+                pts1.append((i, j))
+
+        # pts on box2
+        row_samples = np.linspace(box2[1], box2[1] + box2[3], num=4)
+        col_samples = np.linspace(box2[0], box2[0] + box2[2], num=4)
+        pts2 = []
+        for i in row_samples:
+            for j in col_samples:
+                pts2.append((i, j))
+
+        min_distance = float('inf')
+        closest_pair = (None, None)
+
+        for point1 in pts1:
+            for point2 in pts2:
+                distance = euclidean_distance(point1, point2)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_pair = (point1, point2)
+
+        return min_distance, closest_pair
+
+
+def euclidean_distance(point1, point2):
+
+    """Calculate the Euclidean distance between two points
+    Args:
+        point1 (Tuple|List|Array): (x1, y1)
+        point2 (Tuple|List|Array): (x2, y2)
+
+    Returns:
+        float: Euclidean distance
+    """
+    return np.sqrt(np.sum((np.array(point1) - np.array(point2)) ** 2))
 
 
 # Function to compute IoU between two rectangles, from paddlex\inference\pipelines\table_recognition\pipeline_v2.py
-
 def compute_iou(box1, box2):
     """
     Compute the Intersection over Union (IoU) between two rectangles.
