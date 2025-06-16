@@ -7,7 +7,10 @@ import cv2
 import time
 import yaml
 import json
+import random
 import logging
+import numpy as np
+from PIL import Image, ImageDraw
 from exp.ocr import TableOCR, compute_iou_cal_metrics
 from exp_exist_label import check_and_read
 from paddlex.utils.config import parse_config
@@ -124,8 +127,34 @@ def test_split_into_groups(img_path, platform, save_dir=None):
 
 
 def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
-    table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.INFO)
+    data_dir = "D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets"
+    anns_path = os.path.join(data_dir, "annotations", "instance_train.json")
+    with open(anns_path, 'r', encoding='utf8') as f:
+        val = json.load(f)
+    anns = val['annotations']
+    imgs_info = val['images']
+
+    log_file = os.path.join(save_dir, 'info.log')
+    table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.INFO, log_file=log_file)
     for img_name in os.listdir(data_img_dir):
+        if 'no_border' not in img_name:
+            continue
+
+        for a in imgs_info:
+            tmp_img_name = a['file_name']
+            if tmp_img_name != img_name:
+                continue
+            img_id = a['id']
+
+            ann_boxes = []
+            for j in range(len(anns)):
+                ann = anns[j]
+                if ann['image_id'] != img_id:
+                    continue
+                origin_x, origin_y, w, h = ann['bbox']
+                box = [(origin_x, origin_y), (origin_x + w, origin_y), (origin_x + w, origin_y + h), (origin_x, origin_y + h)]
+                ann_boxes.append(box)
+
         img_path = os.path.join(data_img_dir, img_name)
         img_base_name = os.path.basename(img_path).split('.')[0]
         save_img_dir = os.path.join(save_dir, 'deal_big_region_frame', img_base_name)
@@ -217,9 +246,32 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
             sp = None
         table_ocr.show_img(new_region_table, sp=sp)
 
+        image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        h, w = image.height, image.width
+        img_top = image.copy()
+        random.seed(0)
+
+        draw_top = ImageDraw.Draw(img_top)
+        draw_top = ImageDraw.Draw(img_top)
+
+        for pts in region_pts_poly:
+            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            draw_top.polygon(pts, fill=color)
+
+        img_top = Image.blend(image, img_top, 0.5)
+        compare_region = np.array(img_top)
+
+        for box in ann_boxes:
+            pts = np.array(box, np.int32).reshape((-1, 1, 2))
+            cv2.polylines(compare_region, [pts], True, color, 1)
+        if save_dir is not None:
+            sp = os.path.join(save_img_dir, 'compare_new_region_table.png')
+        else:
+            sp = None
+        table_ocr.show_img(compare_region, sp=sp)
+
         print(f'out into {sp}')
 
-        break
 
 def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=None):
     log_dir = './output/exp/TableOcr'
@@ -242,6 +294,8 @@ def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=
     for i in range(len(imgs_info)):
         image_info = imgs_info[i]
         img_name = image_info['file_name']
+        if 'no_border' not in img_name:
+            continue
         img_id = image_info['id']
         img_path = os.path.join(imgs_dir, img_name)
 
@@ -273,7 +327,7 @@ def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=
     index_logger.info(f'test_indexes: {test_indexes}')
 
 
-def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.8):
+def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.):
     save_dir = './output/exp/deal_big_region_frame'
     os.makedirs(save_dir, exist_ok=True)
     index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(save_dir, 'test_indexes.log'), log_level=logging.DEBUG)
@@ -295,17 +349,12 @@ def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.8
         st = time.time()
         image_info = imgs_info[i]
         img_name = image_info['file_name']
+        if 'no_border' not in img_name:
+            continue
         img_id = image_info['id']
         img_path = os.path.join(imgs_dir, img_name)
 
-        img = table_ocr.check_and_read_img(img_path=img_path)
-        res_boxes = table_ocr.get_ocr_text_boxes(img_path=img_path)
-        canvas = table_ocr.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
-        canvas = canvas * 255
-        regions = table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
-        # regions_info = table_ocr.deal_big_region_frame(region=regions, img_shape=img.shape)
-        # regions = regions_info['region']
-        regions = table_ocr.merge_same_cells_deal_complex_region(regions=regions, img=img)
+        regions = table_ocr.predict(img_path=img_path)
         ed = time.time()
         test_indexes['images_num'] += 1
         test_indexes['time_consume'] += ed - st
@@ -318,7 +367,8 @@ def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.8
             test_indexes['total_cells'] += 1
             x, y, w, h = ann['bbox']
             cell_box = (x, y, x + w, y + h)
-            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=regions, iou_thresh=iou_thresh)
+            region_bounds = [d['bound'] for d in regions]
+            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=region_bounds, iou_thresh=iou_thresh)
             if ans:
                 test_indexes['correct_cells'] += 1
 
@@ -333,14 +383,10 @@ def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.8
 
 
 def cal_metrics(gt_cell_bound, pred_bounds, iou_thresh):
-
-    count = 0
     for bound in pred_bounds:
         iou = compute_iou_cal_metrics(box1=bound, box2=gt_cell_bound)
         if iou >= iou_thresh:
-            count += 1
-    if count == 1:
-        return 1
+            return 1
     return 0
 
 

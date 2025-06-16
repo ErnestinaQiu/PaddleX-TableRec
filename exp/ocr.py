@@ -43,13 +43,19 @@ class TableOCR:
         self.platform = platform
         self.logger = get_logger(name='ocrtable', log_file=log_file, log_level=log_level)
         self.pipeline = create_pipeline(pipeline="OCR")
-        # self.logger.info(dir(self.pipeline))
-        # self.logger.info(dir(self.pipeline.text_det_model))
-        # self.logger.info(dir(self.pipeline.text_rec_model))
         self.save_dir = save_dir
         if self.save_dir:
             os.makedirs(self.save_dir, exist_ok=True)
         self.model = pickle.load(open(md_path, 'rb'))
+
+    def predict(self, img_path):
+        img = self.check_and_read_img(img_path=img_path)
+        res_boxes = self.get_ocr_text_boxes(img_path=img_path)
+        canvas = self.ocr_box_canvas(text_boxes=res_boxes, img_shape=img.shape)
+        canvas = canvas * 255
+        regions = self.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
+        regions = self.merge_same_cells_deal_complex_region(regions=regions, img=img)
+        return regions
 
     def split_into_cell(self, ):
         return
@@ -808,8 +814,8 @@ class TableOCR:
                         cell_region_info[a]['text_boxes'].extend(cell_region_info[b]['text_boxes'])
                         new_bound = (min(bound_a[0], bound_b[0]), min(bound_a[1], bound_b[1]), max(bound_a[2], bound_b[2]), max(bound_b[3], bound_a[3]))
                         new_text_boxes_idxs = cell_region_info[a]['text_boxes_idxs'].extend(cell_region_info[b]['text_boxes_idxs'])
-                        new_text_boxes = cell_region_info[a]['text_boxes'].extend(cell_region_info[b]['text_boxes'])
-                        new_cell_region = {'bound': new_bound, 'box': (new_bound[0], new_bound[1], new_bound[2] - new_bound[0], new_bound[3] - new_bound[1]), 'text_boxes_idxs': new_text_boxes_idxs, 'new_text_boxes': new_text_boxes, 'empty_cell': 0}
+                        new_text_boxes = cell_region_info[a]['text_boxes'] + cell_region_info[b]['text_boxes']
+                        new_cell_region = {'bound': new_bound, 'box': (new_bound[0], new_bound[1], new_bound[2] - new_bound[0], new_bound[3] - new_bound[1]), 'text_boxes_idxs': new_text_boxes_idxs, 'text_boxes': new_text_boxes, 'empty_cell': 0}
                         deal_overlap_cell_region.append(new_cell_region)
                         append_guard = False
                         continue
@@ -901,7 +907,11 @@ class TableOCR:
                         elif y <= subgraph_scope[0] and y + h >= subgraph_scope[1]:
                             iou = round((subgraph_scope[1] - subgraph_scope[0]) / h, 2)
                         if iou >= iou_thresh:
-                            row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
+                            try:
+                                row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
+                            except Exception as e:
+                                print(f"cell_region_info[q]: {cell_region_info[q]}")
+                                raise e
 
             if self.logger_flag == NOTSET:
                 _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in row_subgraphs[p]['cells_info']]
@@ -925,6 +935,8 @@ class TableOCR:
                 # row_bound = (row_subgraphs[p]['bound'][0], scope[0], row_subgraphs[p]['bound'][1], scope[1])
                 row_bound = row_subgraphs[p]['bound']
                 row_cells_info = row_subgraphs[p]['cells_info']
+                if len(row_cells_info) == 0:
+                    continue
 
                 # refresh the bound
                 new_split_row_cell_info = self.fresh_bound(sorted_cell_region_info=row_cells_info, bound=row_bound)
@@ -1447,7 +1459,11 @@ def compute_iou_cal_metrics(box1, box2):
         float: The IoU between the two rectangles.
     """
     # Determine the coordinates of the intersection rectangle
-    x_left = max(box1[0], box2[0])
+    try:
+        x_left = max(box1[0], box2[0])
+    except Exception as e:
+        print(f'box1: {box1}, box2: {box2}')
+        raise e
     y_top = max(box1[1], box2[1])
     x_right = min(box1[2], box2[2])
     y_bottom = min(box1[3], box2[3])

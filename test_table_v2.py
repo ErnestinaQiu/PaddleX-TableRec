@@ -8,7 +8,7 @@ from exp_exist_label import draw_tables
 from exp_ocr import TableOCR, cal_metrics
 
 
-def test_indexes(data_dir, iou_thresh=0.8):
+def test_indexes(data_dir, iou_thresh=0.5):
     log_dir = './output/exp/TableOcr'
     imgs_dir = os.path.join(data_dir, "images")
     anns_path = os.path.join(data_dir, "annotations", "instance_val.json")
