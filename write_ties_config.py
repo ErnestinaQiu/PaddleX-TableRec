@@ -10,7 +10,7 @@ def write_ties_config_file():
     """
     config = {}
     # the max vertices allowed
-    config['max_vertices'] = 900  
+    config['max_vertices'] = 300
     # the normalized shape
     config['normalized_width'] = 256
     config['normalized_height'] = 256

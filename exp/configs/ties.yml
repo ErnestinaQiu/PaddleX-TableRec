@@ -6,11 +6,11 @@ dim_vertex_y_position: 1
 image_channels: 1               # 1 for binary image, 3 for color image
 is_sampling_balanced: 1         # 1 for binary image, 3 for color image
 learning_rate: 0.01
-max_vertices: 900               # the max vertices allowed
+max_vertices: 300               # the max vertices allowed
 # max_words_len: 30               # the max number of words in a cell, don't have such a annotation
 # momentum: 0.9                   # momentum in Adam
 normalized_height: 500          # the normalized shape
-normalized_width: 500           # the normalized shape
+normalized_width: 1000           # the normalized shape
 # batch_size: 32
 epoch_num: 500
 num_global_features: 4          # within the same cell, within the same row, within the same column, no relation

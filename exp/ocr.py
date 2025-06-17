@@ -19,6 +19,8 @@ from paddlex.inference.pipelines.table_recognition.table_recognition_post_proces
 
 from exp_exist_label import draw_tables
 
+from PIL import Image, ImageDraw
+
 
 class TableOCR:
     def __init__(
@@ -114,6 +116,7 @@ class TableOCR:
             # shrink_boxes.append(shrink_box)
 
             new_shrink_boxes, new_box_imgs = self.modify_text_boxes(text_box=shrink_box, box_img=shrink_box_img)
+            # new_shrink_boxes = shrink_boxes
 
             for k in range(len(new_shrink_boxes)):
                 tmp_box = new_shrink_boxes[k]
@@ -166,7 +169,6 @@ class TableOCR:
         return img
 
     def shrink_text_box(self, box_img: np.ndarray, origin_box: List):
-
         """only consider the table line is vertical or horizontal
 
         Args:
@@ -197,6 +199,7 @@ class TableOCR:
         detail = {'margin': [], 'line': []}
         margin_st = -1
         line_st = -1
+        # detect line and margin
         for k in range(binary_image.shape[0]):
             if vertical_accum[k] < line_thresh:
                 if margin_st != -1:
@@ -480,7 +483,7 @@ class TableOCR:
                     if self.save_dir is not None:
                         tmp_region_sp = os.path.join(self.save_dir, f'region_img_row_{i}_col_{j}.png')
                     self.show_img(img=tmp_region_img, sp=tmp_region_sp)
-                    self.logger.info(f'finish tmp region, out into {tmp_region_sp}')
+                    self.logger.debug(f'finish tmp region, out into {tmp_region_sp}')
                     del tmp_region_img
                     del _region_canvas
                     gc.collect()
@@ -579,6 +582,54 @@ class TableOCR:
 
         return margin_bounds
 
+    # have done inside split into region
+    def modify_region_bound_by_big_region_frame(self, regions_info):
+        """modify region bound according to big region frame
+
+        Args:
+            region_info (dict): {'region': region, 'row_bounds': row_bounds, 'col_bounds': col_bounds}
+                                region (list), {'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 1|0}
+
+        Raises:
+            ValueError: _description_
+
+        Returns:
+            region: list of group of text boxes, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...]}, ...]
+        """
+        regions = regions_info['region']
+        row_bounds = regions_info['row_bounds']
+        col_bounds = regions_info['col_bounds']
+        for i in range(len(regions)):
+            x1, y1, x2, y2 = regions[i]['bound']
+            new_x1_info = {'min_dis': 999999, 'value': -1}
+            new_y1_info = {'min_dis': 999999, 'value': -1}
+            new_x2_info = {'min_dis': 999999, 'value': -1}
+            new_y2_info = {'min_dis': 999999, 'value': -1}
+            for p in row_bounds:
+                if abs(p - y1) < new_y1_info['min_dis']:
+                    new_y1_info['value'] = p
+                    new_y1_info['min_dis'] = abs(p - y1)
+                if abs(p - y2) < new_y2_info['min_dis']:
+                    new_y2_info['value'] = p
+                    new_y2_info['min_dis'] = abs(p - y2)
+            for q in col_bounds:
+                if abs(q - x1) < new_x1_info['min_dis']:
+                    new_x1_info['value'] = q
+                    new_x1_info['min_dis'] = abs(q - x1)
+                if abs(q - x2) < new_x2_info['min_dis']:
+                    new_x2_info['value'] = q
+                    new_x2_info['min_dis'] = abs(q - x2)
+
+            if self.logger_flag == NOTSET:
+                if (x1, y1, x2, y2) != (new_x1_info['value'], new_y1_info['value'], new_x2_info['value'], new_y2_info['value']):
+                    self.logger.debug(f"old bound: {(x1, y1, x2, y2)}, new_bound: {(new_x1_info['value'], new_y1_info['value'], new_x2_info['value'], new_y2_info['value'])}")
+
+            regions[i]['bound'] = (new_x1_info['value'], new_y1_info['value'], new_x2_info['value'], new_y2_info['value'])
+
+            self.logger.debug(f"region {i} old_bound: {[x1, y1, x2, y2]}, new_bound: {regions[i]['bound']}\nnew_x1_info: {new_x1_info}, new_y1_info: {new_y1_info}, new_x2_info: {new_x2_info}, new_y2_info: {new_y2_info}\nrow_bounds: {row_bounds}\ncol_bounds: {col_bounds}")
+
+        return regions
+
     # repeat method of split into region
     def deal_big_region_frame(self, region: List, img_shape: Tuple):
         """use info of region to generate frame, and then use the frame to add empty cell into region and modify region bound into cell bound
@@ -647,7 +698,9 @@ class TableOCR:
         for i in range(len(regions)):
             region_info = regions[i]
 
+    def complex_region_frame(self, ):
 
+        return
 
     # TODO deal empty cell inside
     def merge_same_cells_deal_complex_region(self, regions: list, img: np.ndarray, iou_thresh=0.6, dis_thresh=25):
@@ -686,7 +739,7 @@ class TableOCR:
                         pass
                     if rel != 0:
                         dis, _ = self.cal_box_dis(box1, box2)
-                        if dis < 0.05 * dis_thresh:
+                        if dis < 0.2 * dis_thresh:
                             boxes_rel[str(n)]['same_cell'].append(m)
 
             # same cell merge
@@ -783,7 +836,7 @@ class TableOCR:
                     if self.save_dir is not None:
                         tmp_region_sp = os.path.join(self.save_dir, f'merge_cell_big_region_{i}_cell_{q}.png')
                     self.show_img(img=tmp_region_img, sp=tmp_region_sp)
-                    self.logger.info(f'finish merge cell region, out into {tmp_region_sp}')
+                    self.logger.debug(f'finish merge cell region, out into {tmp_region_sp}')
                     del tmp_region_img
                     del _region_canvas
                     gc.collect()
@@ -848,6 +901,14 @@ class TableOCR:
         Returns:
             new_regions_info (List): list of dict, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1, ...]
         """
+        if self.logger_flag == NOTSET:
+            _cell_region_pts = [k['bound'] for k in cell_region_info]
+            _bound_pts = [bound]
+            print(f'_cell_region_pts: {_cell_region_pts}, _bound_pts: {_bound_pts}')
+            _compare_table = self.draw_compare_table(img=img, gt_boxes=_bound_pts, pred_boxes=_cell_region_pts, mode='xyx1y1')
+            self.logger.debug('input of split_complex_region')
+            self.show_img(img=_compare_table, show=True)
+
         new_regions_info = []    # the same structure as cell_region_info
         # analyze row
         # #transform coordinate from absolute to relative
@@ -866,11 +927,15 @@ class TableOCR:
             self.show_img(img=inside_region_canvas * 255, show=True)
 
         row_subgraphs = self.row_analyse(canvas=inside_region_canvas)
-        self.logger.debug(f'row_subgraphs: {row_subgraphs}')
         # #transform coordinate from relative to absolute
-        q = 0
-        for q in row_subgraphs.keys():
-            row_subgraphs[q]['scope'] = [row_subgraphs[q]['scope'][0] + bound[1], row_subgraphs[q]['scope'][1] + bound[1]]
+        for s in range(len(row_subgraphs.keys())):
+            q = list(row_subgraphs.keys())[s]
+            if s == len(row_subgraphs.keys()) - 1:
+                row_subgraphs[q]['scope'] = [row_subgraphs[q]['scope'][0] + bound[1], bound[3]]
+            else:
+                row_subgraphs[q]['scope'] = [row_subgraphs[q]['scope'][0] + bound[1], row_subgraphs[q]['scope'][1] + bound[1]]
+
+        self.logger.debug(f'row_subgraphs: {row_subgraphs}, bound: {bound}')
 
         # case 1
         if len(row_subgraphs) == 1:
@@ -907,43 +972,47 @@ class TableOCR:
                         elif y <= subgraph_scope[0] and y + h >= subgraph_scope[1]:
                             iou = round((subgraph_scope[1] - subgraph_scope[0]) / h, 2)
                         if iou >= iou_thresh:
-                            try:
-                                row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
-                            except Exception as e:
-                                print(f"cell_region_info[q]: {cell_region_info[q]}")
-                                raise e
+                            row_subgraphs[p]['cells_info'].append({'cell_idx': q, 'bound': cell_region_info[q]['bound'], 'text_boxes_idxs': cell_region_info[q]['text_boxes_idxs'], 'text_boxes': cell_region_info[q]['text_boxes']})
+                self.logger.debug(f'row_subgraphs: {row_subgraphs}')
 
-            if self.logger_flag == NOTSET:
-                _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in row_subgraphs[p]['cells_info']]
-                case1_table = draw_tables(img, _pts)
-                self.show_img(case1_table, show=True)
+                if self.logger_flag == NOTSET:
+                    self.logger.debug(f"split row\nrow_subgraphs[{p}]['bound']: {row_subgraphs[p]['bound']}\nrow_subgraphs[{p}]['cells_info']: {row_subgraphs[p]['cells_info']}")
+                    _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in row_subgraphs[p]['cells_info']]
+                    case1_table = draw_tables(img, _pts)
+                    self.show_img(case1_table, show=True)
 
             # get new split cells
-            for q in row_subgraphs.keys():
+            for k in range(len(row_subgraphs.keys())):
+                q = list(row_subgraphs.keys())[k]
                 tmp_row_info = row_subgraphs[q]
                 if len(tmp_row_info['cells_info']) == 1:
                     tmp_row_info['cells_info'][0]['bound'] = tmp_row_info['bound']
                     new_regions_info.append(tmp_row_info['cells_info'][0])
 
                     if self.logger_flag == NOTSET:
+                        self.logger.debug('get new split cells')
                         _pts = [self.transform_x1y1x2y2_into_four_coordinates(tmp_row_info['bound'])]
                         case1_table = draw_tables(img, _pts)
                         self.show_img(case1_table, show=True)
                     continue
+
                 row_subgraphs[p]['cells_info'] = list(sorted(tmp_row_info['cells_info'], key=lambda x: x["bound"][0]))
                 # scope = row_subgraphs[p]['scope']
                 # row_bound = (row_subgraphs[p]['bound'][0], scope[0], row_subgraphs[p]['bound'][1], scope[1])
                 row_bound = row_subgraphs[p]['bound']
                 row_cells_info = row_subgraphs[p]['cells_info']
+
                 if len(row_cells_info) == 0:
                     continue
 
                 # refresh the bound
                 new_split_row_cell_info = self.fresh_bound(sorted_cell_region_info=row_cells_info, bound=row_bound)
+
                 new_regions_info.extend(new_split_row_cell_info)
                 continue
 
         if self.logger_flag == NOTSET:
+            self.logger.debug('Output of split_complex_region')
             _pts = [self.transform_x1y1x2y2_into_four_coordinates(_d['bound']) for _d in new_regions_info]
             case1_table = draw_tables(img, _pts)
             self.show_img(case1_table, show=True)
@@ -978,16 +1047,23 @@ class TableOCR:
             if row_proj[j] > 0 and row_st == -1:
                 row_st = j
             elif row_proj[j] == 0 and row_st != -1:
-                row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': [], 'cell_info': []}
+                row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, j - 1], 'text_boxes': [], 'cells_info': []}
                 row_st = -1
 
         if row_st != -1:
-            row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, canvas.shape[0] - 1], 'text_boxes': [], 'cell_info': []}
+            row_subgraphs[str(len(row_subgraphs))] = {'scope': [row_st, canvas.shape[0] - 1], 'text_boxes': [], 'cells_info': []}
+
+        self.logger.debug(f'row_analyse row_subgraphs: {row_subgraphs}')
 
         correct_st = 0
-        for k in range(len(row_subgraphs)-1):
-            correct_ed = int(row_subgraphs[str(k)]['scope'][1] + row_subgraphs[str(k+1)]['scope'][0] / 2)
+        for k in range(len(row_subgraphs) - 1):
+            correct_ed = int((row_subgraphs[str(k)]['scope'][1] + row_subgraphs[str(k+1)]['scope'][0]) / 2)
             row_subgraphs[str(k)]['scope'] = [correct_st, correct_ed]
+            correct_st = correct_ed
+
+        row_subgraphs[list(row_subgraphs.keys())[-1]]['scope'] = [correct_st, row_subgraphs[list(row_subgraphs.keys())[-1]]['scope'][1]]
+
+        self.logger.debug(f'row_analyse 2 row_subgraphs: {row_subgraphs}')
         return row_subgraphs
 
     def col_analyse(self, canvas: np.ndarray, img: np.ndarray):
@@ -1203,7 +1279,7 @@ class TableOCR:
 
         return subgraphs
 
-    def modify_text_boxes(self, text_box: List, box_img: np.ndarray):
+    def modify_text_boxes(self, text_box: List, box_img: np.ndarray, col_split_percent=90):
         """correct the results of ocr det model
 
         Args:
@@ -1234,7 +1310,7 @@ class TableOCR:
         if len(margins) <= 3:
             return [text_box], [box_img]
 
-        median_thresh = np.percentile([_d['length'] for _d in margins], 90)
+        median_thresh = np.percentile([_d['length'] for _d in margins], col_split_percent)
         bonds = []
         for k in margins:
             if k['length'] > median_thresh:
@@ -1378,8 +1454,8 @@ class TableOCR:
             Tuple: closest point pair
         """
         # pts on box1
-        row_samples = np.linspace(box1[1], box1[1] + box1[3], num=4)
-        col_samples = np.linspace(box1[0], box1[0] + box1[2], num=4)
+        row_samples = np.linspace(box1[1], box1[1] + box1[3], num=10)
+        col_samples = np.linspace(box1[0], box1[0] + box1[2], num=10)
         pts1 = []
         for i in row_samples:
             for j in col_samples:
@@ -1405,6 +1481,42 @@ class TableOCR:
 
         return min_distance, closest_pair
 
+    def draw_compare_table(self, img, gt_boxes, pred_boxes, mode='xyx1y1'):
+        """draw gt_boxes by polyline and pred_boxes by colorful polygon
+
+        Args:
+            gt_boxes (list): ground truth boxes, [x1, y1, x2, y2] | [x, y, w, h]
+            pred_boxes (list): prediction boxes, [x1, y1, x2, y2] | [x, y, w, h]
+            mode (str): 'xyx1y1' | 'xywh'
+        """
+        if mode == 'xyx1y1':
+            gt_pts = [self.transform_x1y1x2y2_into_four_coordinates(box) for box in gt_boxes]
+            pred_pts = [self.transform_x1y1x2y2_into_four_coordinates(box) for box in pred_boxes]
+        elif mode == 'xywh':
+            gt_pts = self.box_to_four_coordinates(gt_boxes)
+            pred_pts = self.box_to_four_coordinates(pred_boxes)
+        else:
+            raise ValueError(f'mode {mode} is not supported')
+
+        image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        img_top = image.copy()
+        random.seed(0)
+
+        draw_top = ImageDraw.Draw(img_top)
+        draw_top = ImageDraw.Draw(img_top)
+
+        for pts in pred_pts:
+            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            draw_top.polygon(pts, fill=color)
+
+        img_top = Image.blend(image, img_top, 0.5)
+        compare_region = np.array(img_top)
+
+        for box in gt_pts:
+            pts = np.array(box, np.int32).reshape((-1, 1, 2))
+            cv2.polylines(compare_region, [pts], True, color, 1)
+
+        return compare_region
 
 def euclidean_distance(point1, point2):
     """Calculate the Euclidean distance between two points

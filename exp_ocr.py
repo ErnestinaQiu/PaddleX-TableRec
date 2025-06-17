@@ -126,9 +126,9 @@ def test_split_into_groups(img_path, platform, save_dir=None):
     table_ocr.split_into_region(canvas=canvas, text_boxes=res_boxes, img=img)
 
 
-def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
-    data_dir = "D:/work/TableRec/paddlex/test/data/table-rec-v2-pipe_practical_datasets_wireless/table-rec-v2-pipe_practical_datasets"
-    anns_path = os.path.join(data_dir, "annotations", "instance_train.json")
+def analyse_deal_big_region_frame(data_dir, platform, save_dir=None):
+    imgs_dir = os.path.join(data_dir, "images")
+    anns_path = os.path.join(data_dir, "annotations", "instance_val.json")
     with open(anns_path, 'r', encoding='utf8') as f:
         val = json.load(f)
     anns = val['annotations']
@@ -136,28 +136,31 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
 
     log_file = os.path.join(save_dir, 'info.log')
     table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.INFO, log_file=log_file)
-    for img_name in os.listdir(data_img_dir):
+
+    for i in range(len(imgs_info)):
+        image_info = imgs_info[i]
+        img_name = image_info['file_name']
         if 'no_border' not in img_name:
             continue
 
-        for a in imgs_info:
-            tmp_img_name = a['file_name']
-            if tmp_img_name != img_name:
+        img_id = image_info['id']
+        img_path = os.path.join(imgs_dir, img_name)
+
+        ann_boxes = []
+
+        for j in range(len(anns)):
+            ann = anns[j]
+            if ann['image_id'] != img_id:
                 continue
-            img_id = a['id']
+            origin_x, origin_y, w, h = ann['bbox']
+            box = [(origin_x, origin_y), (origin_x + w, origin_y), (origin_x + w, origin_y + h), (origin_x, origin_y + h)]
+            ann_boxes.append(box)
 
-            ann_boxes = []
-            for j in range(len(anns)):
-                ann = anns[j]
-                if ann['image_id'] != img_id:
-                    continue
-                origin_x, origin_y, w, h = ann['bbox']
-                box = [(origin_x, origin_y), (origin_x + w, origin_y), (origin_x + w, origin_y + h), (origin_x, origin_y + h)]
-                ann_boxes.append(box)
+        if len(ann_boxes) == 0:
+            continue
 
-        img_path = os.path.join(data_img_dir, img_name)
         img_base_name = os.path.basename(img_path).split('.')[0]
-        save_img_dir = os.path.join(save_dir, 'deal_big_region_frame', img_base_name)
+        save_img_dir = os.path.join(save_dir, 'my_TableOcr', img_base_name)
         os.makedirs(save_img_dir, exist_ok=True)
         table_ocr.save_dir = save_img_dir
         img = table_ocr.check_and_read_img(img_path=img_path)
@@ -230,6 +233,20 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
             sp = None
         table_ocr.show_img(big_frame_img, sp=sp)
 
+        # regions = table_ocr.modify_region_bound_by_big_region_frame(regions_info=regions_info)
+
+        # region_pts_poly = []
+        # for d in modify_frame_regions:
+        #     pts = table_ocr.transform_x1y1x2y2_into_four_coordinates(d['bound'])
+        #     region_pts_poly.append(pts)
+        # region_table = draw_tables(img=img, boxes=region_pts_poly)
+
+        # if save_dir is not None:
+        #     sp = os.path.join(save_img_dir, 'modify_frame_region_table2.png')
+        # else:
+        #     sp = None
+        # table_ocr.show_img(region_table, sp=sp)
+
         new_regions_info = table_ocr.merge_same_cells_deal_complex_region(regions=regions, img=img)
         region_pts_poly = []
         for k in range(len(new_regions_info)):
@@ -261,22 +278,24 @@ def analyse_deal_big_region_frame(data_img_dir, platform, save_dir=None):
         img_top = Image.blend(image, img_top, 0.5)
         compare_region = np.array(img_top)
 
-        for box in ann_boxes:
-            pts = np.array(box, np.int32).reshape((-1, 1, 2))
-            cv2.polylines(compare_region, [pts], True, color, 1)
-        if save_dir is not None:
-            sp = os.path.join(save_img_dir, 'compare_new_region_table.png')
-        else:
-            sp = None
-        table_ocr.show_img(compare_region, sp=sp)
+        if ann_boxes != []:
+            for box in ann_boxes:
+                pts = np.array(box, np.int32).reshape((-1, 1, 2))
+                cv2.polylines(compare_region, [pts], True, color, 1)
+
+            if save_dir is not None:
+                sp = os.path.join(save_img_dir, 'compare_new_region_table.png')
+            else:
+                sp = None
+            table_ocr.show_img(compare_region, sp=sp)
 
         print(f'out into {sp}')
 
 
-def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=None):
+def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.3, save_dir=None):
     log_dir = './output/exp/TableOcr'
     os.makedirs(log_dir, exist_ok=True)
-    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(log_dir, 'test_indexes.log'), log_level=logging.DEBUG)
+    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(log_dir, f'test_indexes_{iou_thresh}.log'), log_level=logging.DEBUG)
 
     table_ocr = TableOCR(platform=platform, save_dir=None, log_level=logging.ERROR)
     test_indexes = {'total_cells': 0, 'correct_cells': 0, 'total_pred_cells': 0, 'iou_thresh': iou_thresh}   # correct cells meet the requirements where the iou > iou_thresh
@@ -327,10 +346,10 @@ def test_split_and_merge_index_iou(data_dir, platform, iou_thresh=0.5, save_dir=
     index_logger.info(f'test_indexes: {test_indexes}')
 
 
-def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.):
-    save_dir = './output/exp/deal_big_region_frame'
+def test_my_model_TableOCR(data_dir, platform, save_dir=None, iou_thresh=0.4):
+    save_dir = './output/exp/TableOcr'
     os.makedirs(save_dir, exist_ok=True)
-    index_logger = get_logger(name='TableOcrTest', log_file=os.path.join(save_dir, 'test_indexes.log'), log_level=logging.DEBUG)
+    index_logger = get_logger(name='MyTableOcrTest', log_file=os.path.join(save_dir, f'test_my_model_indexes_no_border_{iou_thresh}_modify_ocr_boxes_col_split_90.log'), log_level=logging.DEBUG)
 
     table_ocr = TableOCR(platform=platform, save_dir=save_dir, log_level=logging.CRITICAL)
     test_indexes = {'total_cells': 0, 'correct_cells': 0, 'total_pred_cells': 0, 'recall': 0, 'precision': 0, 'time_consume': 0, 'images_num': 0, 'per_image_time_consume': 0}  # correct cells meet the requirements where the iou > iou_thresh
@@ -346,7 +365,7 @@ def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.)
     imgs_info = val['images']
     anns = val['annotations']
     for i in range(len(imgs_info)):
-        st = time.time()
+        # read data
         image_info = imgs_info[i]
         img_name = image_info['file_name']
         if 'no_border' not in img_name:
@@ -354,12 +373,12 @@ def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.)
         img_id = image_info['id']
         img_path = os.path.join(imgs_dir, img_name)
 
-        regions = table_ocr.predict(img_path=img_path)
+        # TableOcr predict
+        st = time.time()
+        pred_cells = table_ocr.predict(img_path=img_path)
         ed = time.time()
-        test_indexes['images_num'] += 1
-        test_indexes['time_consume'] += ed - st
-        test_indexes['total_pred_cells'] += len(regions)
-        test_indexes['per_image_time_consume'] = round(test_indexes['time_consume'] / test_indexes['images_num'], 4)
+
+        # metric calculation
         for j in range(len(anns)):
             ann = anns[j]
             if ann['image_id'] != img_id:
@@ -367,11 +386,17 @@ def test_deal_big_region_frame(data_dir, platform, save_dir=None, iou_thresh=0.)
             test_indexes['total_cells'] += 1
             x, y, w, h = ann['bbox']
             cell_box = (x, y, x + w, y + h)
-            region_bounds = [d['bound'] for d in regions]
-            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=region_bounds, iou_thresh=iou_thresh)
+            pred_cells_boxes = [d['bound'] for d in pred_cells]
+            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=pred_cells_boxes, iou_thresh=iou_thresh)
             if ans:
                 test_indexes['correct_cells'] += 1
 
+        # time consumption
+        test_indexes['images_num'] += 1
+        test_indexes['time_consume'] += ed - st
+        test_indexes['total_pred_cells'] += len(pred_cells)
+        test_indexes['per_image_time_consume'] = round(test_indexes['time_consume'] / test_indexes['images_num'], 4)
+        # recall&precision
         test_indexes['recall'] = test_indexes['correct_cells'] / test_indexes['total_cells']
         test_indexes['precision'] = test_indexes['correct_cells'] / test_indexes['total_pred_cells']
         index_logger.debug(f'test_indexes: {test_indexes}')
@@ -455,6 +480,6 @@ if __name__ == "__main__":
     # test_split_and_merge_data_dir(data_img_dir=img_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'split_into_region'))
 
     # test_split_and_merge_index_iou(data_dir=data_dir, platform='aistudio', iou_thresh=0.5)
-    # test_deal_big_region_frame(data_dir=data_dir, platform='aistudio', iou_thresh=0.5)
-    # analyse_deal_big_region_frame(data_img_dir=img_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'deal_big_region_frame'))
-    test_deal_big_region_frame(data_dir=data_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'deal_big_region_frame_test'))
+    # test_my_model_TableOCR(data_dir=data_dir, platform='aistudio', iou_thresh=0.5)
+    # analyse_deal_big_region_frame(data_dir=data_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'my_TableOcr'))
+    test_my_model_TableOCR(data_dir=data_dir, platform='aistudio', save_dir=os.path.join(save_dir, 'my_model_TableOCR_test'))

@@ -83,6 +83,93 @@ class TiesDataSet(IterableDataset):
             img = self.check_and_read(img_path=img_path)
             boxes = []                     # [x, y, w, h]
             new_format_cell_boxes = []          # [x1, y1, x2, y2]
+
+            ann_guard = True
+            for j in range(len(anns)):
+                ann = anns[j]
+                if ann['image_id'] != img_id:
+                    continue
+                ann_guard = False
+                boxes.append(ann['bbox'])
+                x, y, w, h = ann['bbox']
+                new_format_cell_boxes.append([x, y, x + w, y + h])
+
+            if ann_guard:
+                continue
+
+            # get norm image tensor
+            ratio, norm_img, norm_cell_boxes = self.scale(img=img, text_boxes=boxes, target_width=self.normalized_width, target_height=self.normalized_height)
+            norm_img = np.transpose(norm_img, (2, 0, 1))
+            norm_img_tensor = np.ones(shape=(img.shape[2], self.normalized_height, self.normalized_width)) * 255
+            norm_img_tensor[:, :norm_img.shape[1], :norm_img.shape[2]] = norm_img[:, :, :]
+
+            # get relation matrix of ocr result boxes
+            cells_rel = self.get_cells_relations(boxes=new_format_cell_boxes)
+
+            batch_cell_rels.append(cells_rel)
+
+            res_boxes = self.table_ocr.get_ocr_text_boxes(img_path=img_path)
+
+            # get relations among ocr result boxes
+            res_box_rel = self.get_boxes_rels_according_to_cells_rels(res_boxes=res_boxes, cells_rel=cells_rel)
+
+            batch_res_boxes_rels.append(res_box_rel)
+
+            # scale ocr res boxes
+            norm_res_boxes = self.scale_by_ratio(boxes=res_boxes, ratio=ratio)
+
+            images.append(norm_img_tensor)
+            cell_boxes.append(norm_cell_boxes)
+            ocr_res_boxes.append(norm_res_boxes)
+
+            cell_adj_mat = np.zeros(shape=(self.max_vertices, self.max_vertices), dtype=np.int8)
+            row_adj_mat = np.zeros(shape=(self.max_vertices, self.max_vertices), dtype=np.int8)
+            col_adj_mat = np.zeros(shape=(self.max_vertices, self.max_vertices), dtype=np.int8)
+            for k in res_box_rel.keys():
+                same_cell_idxs = res_box_rel[k]['same_cell']
+                for m in same_cell_idxs:
+                    cell_adj_mat[int(k), int(m)] = 1
+
+                same_row_idxs = res_box_rel[k]['same_row']
+                for n in same_row_idxs:
+                    row_adj_mat[int(k), int(n)] = 1
+
+                same_col_idxs = res_box_rel[k]['same_col']
+                for l in same_col_idxs:
+                    col_adj_mat[int(k), int(l)] = 1
+
+            cell_adj_mats.append(cell_adj_mat)
+            row_adj_mats.append(row_adj_mat)
+            col_adj_mats.append(col_adj_mat)
+
+        images = paddle.to_tensor(images, dtype=paddle.float32)
+        cell_adj_mats = paddle.to_tensor(data=cell_adj_mats, dtype=paddle.float32)
+        row_adj_mats = paddle.to_tensor(data=row_adj_mats, dtype=paddle.float32)
+        col_adj_mats = paddle.to_tensor(data=col_adj_mats, dtype=paddle.float32)
+
+        yield {'images': images, 'cell_boxes': cell_boxes, "ocr_res_boxes": ocr_res_boxes, "cell_adj_mats": cell_adj_mats, "row_adj_mats": row_adj_mats, "col_adj_mats": col_adj_mats}
+
+    def get_all_data(self):
+        imgs_info, anns = self.get_info()
+        images = []
+        cell_boxes = []
+        ocr_res_boxes = []
+        cell_adj_mats = []
+        row_adj_mats = []
+        col_adj_mats = []
+        batch_cell_rels = []
+        batch_res_boxes_rels = []
+
+        for i in range(len(imgs_info)):
+            # read data
+            image_info = imgs_info[i]
+            img_name = image_info['file_name']
+            img_id = image_info['id']
+            img_path = os.path.join(self.imgs_dir, img_name)
+
+            img = self.check_and_read(img_path=img_path)
+            boxes = []                     # [x, y, w, h]
+            new_format_cell_boxes = []          # [x1, y1, x2, y2]
             for j in range(len(anns)):
                 ann = anns[j]
                 if ann['image_id'] != img_id:
@@ -136,12 +223,11 @@ class TiesDataSet(IterableDataset):
             row_adj_mats.append(row_adj_mat)
             col_adj_mats.append(col_adj_mat)
 
-        images = paddle.to_tensor(images, dtype=paddle.float32)
-        cell_adj_mats = paddle.to_tensor(data=cell_adj_mats, dtype=paddle.float32)
-        row_adj_mats = paddle.to_tensor(data=row_adj_mats, dtype=paddle.float32)
-        col_adj_mats = paddle.to_tensor(data=col_adj_mats, dtype=paddle.float32)
-
-        yield {'images': images, 'cell_boxes': cell_boxes, "ocr_res_boxes": ocr_res_boxes, "cell_adj_mats": cell_adj_mats, "row_adj_mats": row_adj_mats, "col_adj_mats": col_adj_mats}
+        # images = paddle.to_tensor(images, dtype=paddle.float32)
+        # cell_adj_mats = paddle.to_tensor(data=cell_adj_mats, dtype=paddle.float32)
+        # row_adj_mats = paddle.to_tensor(data=row_adj_mats, dtype=paddle.float32)
+        # col_adj_mats = paddle.to_tensor(data=col_adj_mats, dtype=paddle.float32)
+        return {'images': images, 'cell_boxes': cell_boxes, "ocr_res_boxes": ocr_res_boxes, "cell_adj_mats": cell_adj_mats, "row_adj_mats": row_adj_mats, "col_adj_mats": col_adj_mats}
 
     def cell_gen(self):
         """For model training

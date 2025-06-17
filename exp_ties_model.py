@@ -5,6 +5,7 @@ author: Ernestina Qiu
 import os
 import gc
 import yaml
+import time
 import logging
 import numpy as np
 from datetime import datetime
@@ -17,7 +18,47 @@ from exp.data.ties_dataset import TiesDataSet
 from paddlex.repo_manager.repos.PaddleOCR.ppocr.utils.logging import get_logger
 
 
-def get_pred_detail(d:dict, model, config:dict):
+def test_model(device='cpu'):
+    paddle.set_device(device)
+    save_dir = './output/exp/TIES/20250616210258'
+    config_path = os.path.join(os.getcwd(), 'exp/configs/ties.yml')
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+
+    test_logger = get_logger(name='test_model', log_file=os.path.join(save_dir, f'test_model_20250616210258.log'), log_level=logging.INFO)
+    model = BasicModel(config, logger=test_model)
+    model_path = "D:/work/TableRec/PaddleX-TableRec/output/exp/TIES/20250616210258/best_model/best_model.pdparams"
+    model.set_state_dict(paddle.load(model_path))
+
+    ds = TiesDataSet(config=config, logger=test_logger, mode='val')
+    val_dict = ds.get_all_data()
+
+    test_indexes = {'acc': 0, 'acc_sum': 0, 'time_consume': 0, 'images_num': 0, 'per_image_time_consume': 0}  # correct cells meet the requirements where the iou > iou_thresh
+
+    for i in range(len(val_dict['cell_boxes'])):
+        image = paddle.to_tensor([val_dict['images'][i]], dtype=paddle.float32)
+        cell_boxes = [val_dict['cell_boxes'][i]]
+        ocr_res_boxes = [val_dict["ocr_res_boxes"][i]]
+        cell_adj_mats = paddle.to_tensor([val_dict['cell_adj_mats'][i]], dtype=paddle.float32)
+        row_adj_mats = paddle.to_tensor([val_dict['row_adj_mats'][i]], dtype=paddle.float32)
+        col_adj_mats = paddle.to_tensor([val_dict['col_adj_mats'][i]], dtype=paddle.float32)
+        one_img_val_dict = {'images': image, 'cell_boxes': cell_boxes, "ocr_res_boxes": ocr_res_boxes, "cell_adj_mats": cell_adj_mats, "row_adj_mats": row_adj_mats, "col_adj_mats": col_adj_mats}
+
+        st = time.time()
+        val_detail = get_pred_detail(one_img_val_dict, model=model, config=config, device=device)
+        ed = time.time()
+
+        test_indexes['acc_sum'] += val_detail['weighted_acc']
+        test_indexes['images_num'] += 1
+        test_indexes['acc'] = test_indexes['acc_sum'].value() / test_indexes['images_num']
+
+        test_indexes['time_consume'] += ed - st
+
+        test_logger.info(test_indexes)
+
+
+def get_pred_detail(d: dict, model, config: dict, device='gpu'):
+    paddle.set_device(device)
     images = d['images']
     cell_boxes = d['cell_boxes']
     ocr_res_boxes = d['ocr_res_boxes']
@@ -92,7 +133,7 @@ def exp():
     train_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='train')
     val_ties_ds = TiesDataSet(config=config, logger=ds_logger, mode='val')
 
-    md_logger = get_logger(name='exp_md', log_file=os.path.join(save_dir, f'exp_same_row_{date_string}.log'), log_level=logging.DEBUG)
+    md_logger = get_logger(name='exp_md', log_file=os.path.join(save_dir, f'exp_same_row_{date_string}.log'), log_level=logging.INFO)
     model = BasicModel(config, logger=md_logger)
 
     md_save_dir = os.path.join(save_dir, 'models')
@@ -132,7 +173,7 @@ def exp():
 
             scheduler.step(metrics=train_loss)
             current_lr = scheduler.last_lr
-            md_logger.info(f"[train] epoch: {epoch}, batch_id: {batch_id}, train_acc is: {train_acc}, loss is: {train_loss.numpy()}, lr: {current_lr}\ntrain_cell_loss: {train_cell_loss}, train_cell_acc: {train_cell_acc}, train_row_loss: {train_row_loss}, train_row_acc: {train_row_acc}, train_col_loss: {train_col_loss}, train_col_acc: {train_col_acc}")
+            md_logger.info(f"[train] epoch: {epoch}, batch_id: {batch_id}, train_acc is: {train_acc}, loss is: {train_loss.numpy()}, lr: {current_lr}/ntrain_cell_loss: {train_cell_loss}, train_cell_acc: {train_cell_acc}, train_row_loss: {train_row_loss}, train_row_acc: {train_row_acc}, train_col_loss: {train_col_loss}, train_col_acc: {train_col_acc}")
             if (epoch + 1) % 5 == 0:
                 save_path = os.path.join(md_save_dir, f"model_epoch_{epoch+1}_row_acc_{train_row_acc:.4f}.pdparams")
                 paddle.save(model.state_dict(), save_path)
@@ -176,5 +217,7 @@ def exp():
             if paddle.is_compiled_with_cuda():
                 paddle.device.cuda.empty_cache()
 
+
 if __name__ == "__main__":
-    exp()
+    # exp()
+    test_model()

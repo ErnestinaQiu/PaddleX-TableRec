@@ -23,7 +23,7 @@ class DgcnnSegment(paddle.nn.Layer):
         self.bn = paddle.nn.BatchNorm1D(num_features=x.shape[1], momentum=0.8)
         feat = self.bn(x)
         # global transform to 3D
-        feat = high_dim_dense(feat, nodes=900)
+        feat = high_dim_dense(feat, nodes=300)
 
         feat = edge_conv_layer(feat, 10, [64, 64, 64])
         feat_g = layer_global_exchange(feat)

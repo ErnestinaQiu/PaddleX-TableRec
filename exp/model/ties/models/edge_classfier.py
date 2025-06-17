@@ -34,7 +34,7 @@ class EdgeClassifier(nn.Layer):
         net = self.dense1(net)
         net = self.dense1(net)
 
-        self.dense2 = DenseLayer(output_dim=900)
+        self.dense2 = DenseLayer(output_dim=300)
         net = self.dense2(net)
 
         predicted_adj_matrix = F.sigmoid(net)
