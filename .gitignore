@@ -177,3 +177,16 @@ cython_debug/
 /output
 read_dataset_v2.py
 command.md
+exp_ocr.py
+test_table_v2.py
+compare_two_models.py
+test_table_v2.py
+exp/configs/xgb.yml
+exp_xgb.py
+PaddleX-TableRec.code-workspace3.code-workspace
+test_complete_line.py
+test_table_v2.py
+exp_ocr.py
+exp_ties_model_row.py
+exp/complete_frame_line.py
+exp/complete_frame_line.py
