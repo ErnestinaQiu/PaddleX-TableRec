@@ -198,7 +198,7 @@ def test_table_rec_border_table(data_dir):
 
 
 def test_table_rec_no_border_table(data_dir):
-    save_dir = 'D:/work/TableRec/PaddleX-TableRec/output/exp/test_no_border_predict_tactic_4'
+    save_dir = 'D:/work/TableRec/PaddleX-TableRec/output/exp/test_no_border_predict_tactic_5'
     os.makedirs(save_dir, exist_ok=True)
 
     index_logger = get_logger(name='TableOcrTest1', log_file=os.path.join(save_dir, 'test_table_rec_indexes_no_border.log'), log_level=logging.DEBUG)

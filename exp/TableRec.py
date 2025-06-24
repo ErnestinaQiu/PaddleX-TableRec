@@ -65,7 +65,7 @@ class TableRec:
         cells_info = self.merge_predictions(img, pred_bounds, regions)
         pred_bounds = [d['bound'] for d in cells_info]
         pred_bounds = self.frame_alignment(img, pred_bounds)
-        pred_bounds = self.modify_bound(img, pred_bounds)
+        pred_bounds = self.deal_columns(pred_bounds, regions, img=img)
         return pred_bounds
 
     # TODO not finish yet, need to alignment frame by def frame_alignment and use inform frame lines
@@ -80,85 +80,199 @@ class TableRec:
 
         return pred_bounds
 
-    def modify_bound(self, img, bounds, scope_iou_thresh=0.5):
-        """Modify the bounds of cells from TableOcr into frame
+    def deal_columns(self, pred_bounds, regions, img, scope_iou_thresh=0.3):
+        """Add missing columns
 
         Args:
-            img (array): image
-            bounds (list): list of bounds, (x1, y1, x2, y2)
-            scope_iou_thresh (float, optional): the thresh for splitting cells into row. Defaults to 0.5.
-
+            pred_bounds (list): [(x1, y1, x2, y2), ...]
+            regions (lis): list of dict, [{'bound': [x1, y1, x2, y2], 'text_boxes': [[x1, y1, w, h], ...], 'empty_cell': 0|1}, ...]
         Returns:
-            list: list of bounds
+            bounds (list):  [(x1, y1, x2, y2), ...]
         """
-        bounds = list(sorted(bounds, key=lambda x: x[1]))
-        row_subgraphs = {}
+        # get columns
+        pred_bounds = list(sorted(pred_bounds, key=lambda x: (x[0], x[1])))
+        pred_col_subgraphs = self.col_subgraphs(pred_bounds, scope_iou_thresh=scope_iou_thresh)
+        region_bounds = [d['bound'] for d in regions]
+        region_col_subgraphs = self.col_subgraphs(region_bounds)
+
+        if self.logger_flag == DEBUG:
+            for _k, _v in pred_col_subgraphs.items():
+                _bounds = _v['cells']
+                _pts = [self.table_ocr.transform_x1y1x2y2_into_four_coordinates(_b) for _b in _bounds]
+                col_img = self.table_ocr.draw_boxes(img, boxes=_pts)
+                self.table_ocr.show_img(col_img, show=True)
+
+        pred_first_col = pred_col_subgraphs['0']
+        region_first_col = region_col_subgraphs['0']
+        if len(region_first_col['cells']) > 2:
+            r_x1, r_x2 = region_first_col['scope']
+        else:
+            r_x1, r_x2 = pred_first_col['scope']
+
+        for k, v in pred_col_subgraphs.items():
+            cells = v['cells']
+            new_cells = []
+            for cell in cells:
+                x1, y1, x2, y2 = cell
+                if self.logger_flag == DEBUG:
+                    cell_img = self.table_ocr.draw_boxes(img, [self.table_ocr.transform_x1y1x2y2_into_four_coordinates(cell)])
+                    self.table_ocr.show_img(cell_img, show=True)
+                tmp_iou = self.compute_scope_iou_within_scope1((r_x1, r_x2), (x1, x2))
+                self.logger.debug(f'tmp_iou: {tmp_iou}')
+                if tmp_iou > 0.6:
+                    if r_x2 - x1 > 5:
+                        new_cells.append((x1, y1, r_x2, y2))
+                    if x2 - r_x2 > 5:
+                        new_cells.append((r_x2, y1, x2, y2))
+                else:
+                    new_cells.append(cell)
+
+            if self.logger_flag == DEBUG:
+                cells_img = self.table_ocr.draw_boxes(img, [self.table_ocr.transform_x1y1x2y2_into_four_coordinates(_cell) for _cell in new_cells])
+                self.table_ocr.show_img(cells_img, show=True)
+
+            pred_col_subgraphs[k]['cells'] = new_cells
+
+        if self.logger_flag == DEBUG:
+            for _k, _v in pred_col_subgraphs.items():
+                _bounds = _v['cells']
+                _pts = [self.table_ocr.transform_x1y1x2y2_into_four_coordinates(_b) for _b in _bounds]
+                col_img = self.table_ocr.draw_boxes(img, boxes=_pts)
+                self.table_ocr.show_img(col_img, show=True)
+
+        new_pred_bounds = []
+        for k, v in pred_col_subgraphs.items():
+            new_pred_bounds.extend(v['cells'])
+
+        # # deal header columns
+        # pred_bounds = new_pred_bounds
+        # pred_col_subgraphs = self.col_subgraphs(pred_bounds, scope_iou_thresh=scope_iou_thresh)
+        # for k, v in pred_col_subgraphs.items():
+        #     cells = v['cells']
+        #     cells = list(sorted(cells, key=lambda x: x[1]))
+        #     h_x1, h_y1, h_x2, h_y2 = cells[0]
+        #     new_cells = []
+        #     for cell in cells:
+        #         iou = self.compute_scope_iou((h_x1, h_x2), (cell[0], cell[2]))
+        #         x1, y1, x2, y2 = cell
+        #         if iou < 0.6 and h_x2 < cell[2]:
+        #             new_cells.append((x1, y1, h_x2, y2))
+        #             new_cells.append((h_x2, y1, x2, y2))
+        #         else:
+        #             new_cells.append(cell)
+        #     pred_col_subgraphs[k]['cells'] = new_cells
+
+        # new_pred_bounds = []
+        # for k, v in pred_col_subgraphs.items():
+        #     new_pred_bounds.extend(v['cells'])
+
+        return new_pred_bounds
+
+    def col_subgraphs(self, bounds, scope_iou_thresh=0.6):
+        col_subgraphs = {}
         for d in bounds:
             x1, y1, x2, y2 = d
-            if len(row_subgraphs) == 0:
-                row_subgraphs[str(len(row_subgraphs))] = {'scope': [y1, y2], 'cells': [d]}
+            if len(col_subgraphs) == 0:
+                col_subgraphs[str(len(col_subgraphs))] = {'scope': [x1, x2], 'cells': [d]}
                 continue
-            row_y1, row_y2 = row_subgraphs[str(len(row_subgraphs) - 1)]['scope']
-            if y1 >= row_y1 - 3 and y2 <= row_y2 + 3:
+            col_x1, col_x2 = col_subgraphs[str(len(col_subgraphs) - 1)]['scope']
+            if x1 >= col_x1 - 3 and x2 <= col_x2 + 3:
                 iou = 1
             else:
-                iou = self.compute_scope_iou((y1, y2), (row_y1, row_y2))
+                iou = self.compute_scope_iou((col_x1, col_x2), (x1, x2))
             if iou >= scope_iou_thresh:
-                if d in row_subgraphs[str(len(row_subgraphs) - 1)]['cells']:
+                if d in col_subgraphs[str(len(col_subgraphs) - 1)]['cells']:
                     continue
-                row_subgraphs[str(len(row_subgraphs) - 1)]['cells'].append(d)
-                row_y1 = min(row_y1, y1)
-                row_y2 = max(row_y2, y2)
-                row_subgraphs[str(len(row_subgraphs) - 1)]['scope'] = [row_y1, row_y2]
+                col_subgraphs[str(len(col_subgraphs) - 1)]['cells'].append(d)
+                col_x1 = min(col_x1, x1)
+                col_x2 = max(col_x2, x2)
+                col_subgraphs[str(len(col_subgraphs) - 1)]['scope'] = [col_x1, col_x2]
             else:
-                new_key = str(len(row_subgraphs))
-                row_subgraphs[new_key] = {}
-                row_subgraphs[new_key]['scope'] = [y1, y2]
-                row_subgraphs[new_key]['cells'] = [d]
+                new_key = str(len(col_subgraphs))
+                col_subgraphs[new_key] = {}
+                col_subgraphs[new_key]['scope'] = [x1, x2]
+                col_subgraphs[new_key]['cells'] = [d]
+        return col_subgraphs
 
-        # modify x only
-        mod_cells_info = []
-        for k, v in row_subgraphs.items():
-            y1, y2 = v['scope']
-            cells = v['cells']
-            cells = list(sorted(cells, key=lambda x: x[0]))
-            for i in range(len(cells) - 1):
-                x11, y11, x12, y12 = cells[i]
-                x21, y21, x22, y22 = cells[i + 1]
-                if abs(y11 - y21) >= 3 or abs(y12 - y22) >= 3:
-                    continue
-                if abs(x21 - x12) <= 3:
-                    continue
+    # def modify_bound(self, img, bounds, scope_iou_thresh=0.5):
+    #     """Modify the bounds of cells from TableOcr into frame
 
-                self.logger.info(f'cells[{i}]: {cells[i]}, cells[{i + 1}]: {cells[i + 1]}')
-                if x12 < x21:
-                    x21 = x12
-                    cells[i + 1] = (x21, y21, x22, y22)
-                elif x12 > x21:
-                    overlap_bound = [x21, max(y11, y21), min(x12, x22), min(y12, y22)]
-                    overlap_img = img[overlap_bound[1]: overlap_bound[3], overlap_bound[0]: overlap_bound[2]]
-                    _, overlap_bin_img = cv2.threshold(overlap_img, 127, 1, cv2.THRESH_BINARY)
-                    overlap_bin_img = 1 - overlap_bin_img
-                    col_proj = np.array([np.sum(overlap_bin_img[:, p]) for p in range(overlap_bin_img.shape[1])])
-                    mask = np.ones(5)
-                    n = 0
-                    new_x12 = -1
-                    while n < overlap_bin_img.shape[1] - 5:
-                        if np.sum(col_proj[n: n + 5] * mask) == 0:
-                            new_x12 = n + 3
-                            break
-                        n += 1
-                    if new_x12 == -1:
-                        new_x12 = int((x12 + x21) / 2)
-                    x12 = x21 = new_x12
-                    cells[i] = (x11, y11, x12, y12)
-                    cells[i + 1] = (x21, y21, x22, y22)
-                else:
-                    pass
-                self.logger.info(f'after modify, cells[{i}]: {cells[i]}, cells[{i + 1}]: {cells[i + 1]}')
+    #     Args:
+    #         img (array): image
+    #         bounds (list): list of bounds, (x1, y1, x2, y2)
+    #         scope_iou_thresh (float, optional): the thresh for splitting cells into row. Defaults to 0.5.
+
+    #     Returns:
+    #         list: list of bounds
+    #     """
+    #     bounds = list(sorted(bounds, key=lambda x: x[1]))
+    #     row_subgraphs = {}
+    #     for d in bounds:
+    #         x1, y1, x2, y2 = d
+    #         if len(row_subgraphs) == 0:
+    #             row_subgraphs[str(len(row_subgraphs))] = {'scope': [y1, y2], 'cells': [d]}
+    #             continue
+    #         row_y1, row_y2 = row_subgraphs[str(len(row_subgraphs) - 1)]['scope']
+    #         if y1 >= row_y1 - 3 and y2 <= row_y2 + 3:
+    #             iou = 1
+    #         else:
+    #             iou = self.compute_scope_iou((y1, y2), (row_y1, row_y2))
+    #         if iou >= scope_iou_thresh:
+    #             if d in row_subgraphs[str(len(row_subgraphs) - 1)]['cells']:
+    #                 continue
+    #             row_subgraphs[str(len(row_subgraphs) - 1)]['cells'].append(d)
+    #             row_y1 = min(row_y1, y1)
+    #             row_y2 = max(row_y2, y2)
+    #             row_subgraphs[str(len(row_subgraphs) - 1)]['scope'] = [row_y1, row_y2]
+    #         else:
+    #             new_key = str(len(row_subgraphs))
+    #             row_subgraphs[new_key] = {}
+    #             row_subgraphs[new_key]['scope'] = [y1, y2]
+    #             row_subgraphs[new_key]['cells'] = [d]
+
+    #     # modify x only
+    #     mod_cells_info = []
+    #     for k, v in row_subgraphs.items():
+    #         y1, y2 = v['scope']
+    #         cells = v['cells']
+    #         cells = list(sorted(cells, key=lambda x: x[0]))
+    #         for i in range(len(cells) - 1):
+    #             x11, y11, x12, y12 = cells[i]
+    #             x21, y21, x22, y22 = cells[i + 1]
+    #             if abs(y11 - y21) >= 3 or abs(y12 - y22) >= 3:
+    #                 continue
+    #             if abs(x21 - x12) <= 3:
+    #                 continue
+
+    #             self.logger.info(f'cells[{i}]: {cells[i]}, cells[{i + 1}]: {cells[i + 1]}')
+    #             if x12 < x21:
+    #                 x21 = x12
+    #                 cells[i + 1] = (x21, y21, x22, y22)
+    #             elif x12 > x21:
+    #                 overlap_bound = [x21, max(y11, y21), min(x12, x22), min(y12, y22)]
+    #                 overlap_img = img[overlap_bound[1]: overlap_bound[3], overlap_bound[0]: overlap_bound[2]]
+    #                 _, overlap_bin_img = cv2.threshold(overlap_img, 127, 1, cv2.THRESH_BINARY)
+    #                 overlap_bin_img = 1 - overlap_bin_img
+    #                 col_proj = np.array([np.sum(overlap_bin_img[:, p]) for p in range(overlap_bin_img.shape[1])])
+    #                 mask = np.ones(5)
+    #                 n = 0
+    #                 new_x12 = -1
+    #                 while n < overlap_bin_img.shape[1] - 5:
+    #                     if np.sum(col_proj[n: n + 5] * mask) == 0:
+    #                         new_x12 = n + 3
+    #                         break
+    #                     n += 1
+    #                 if new_x12 == -1:
+    #                     new_x12 = int((x12 + x21) / 2)
+    #                 x12 = x21 = new_x12
+    #                 cells[i] = (x11, y11, x12, y12)
+    #                 cells[i + 1] = (x21, y21, x22, y22)
+    #             else:
+    #                 pass
+    #             self.logger.info(f'after modify, cells[{i}]: {cells[i]}, cells[{i + 1}]: {cells[i + 1]}')
                 
-            mod_cells_info.extend(cells)
-        return mod_cells_info
+    #         mod_cells_info.extend(cells)
+    #     return mod_cells_info
 
     def frame_alignment(self, img, bounds):
         """align all the bounds into frame
@@ -473,6 +587,30 @@ class TableRec:
         iou = round((s2 - s1) / (l2 - l1), 4)
         return iou
 
+    def compute_scope_iou_within_scope1(self, scope1, scope2):
+        """compute the iou of scope of rows or columns
+
+        Args:
+            scope1 (list): row scope | column scope, (y1, y2) | (x1, x2)
+            scope2 (list): row scope | column scope, (y1, y2) | (x1, x2)
+        """
+        a1, a2 = scope1
+        a1 = min(a1, a1)
+        a2 = max(a1, a2)
+        b1, b2 = scope2
+        b1 = min(b1, b2)
+        b2 = max(b1, b2)
+
+        if a2 <= b1 or b2 <= a1:
+            return 0
+
+        s1 = max(a1, b1)
+        s2 = min(a2, b2)
+        l1 = min(a1, b1)
+        l2 = max(a2, b2)
+
+        iou = round((s2 - s1) / (a2 - a1), 4)
+        return iou
 
 def euclidean_distance(point1, point2):
     """Calculate the Euclidean distance between two points
@@ -1822,7 +1960,7 @@ class TableOCR:
 
         Args:
             img (np.ndarray): the canvas image
-            boxes (List): [x, y, w, h]
+            boxes (List): four points
             color_mode (str): can be 'random' or 'same'.
 
         Returns:
