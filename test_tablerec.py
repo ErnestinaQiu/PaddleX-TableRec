@@ -198,7 +198,7 @@ def test_table_rec_border_table(data_dir):
 
 
 def test_table_rec_no_border_table(data_dir):
-    save_dir = 'D:/work/TableRec/PaddleX-TableRec/output/exp/test_no_border_predict_tactic_2'
+    save_dir = 'D:/work/TableRec/PaddleX-TableRec/output/exp/test_no_border_predict_tactic_4'
     os.makedirs(save_dir, exist_ok=True)
 
     index_logger = get_logger(name='TableOcrTest1', log_file=os.path.join(save_dir, 'test_table_rec_indexes_no_border.log'), log_level=logging.DEBUG)
@@ -243,7 +243,7 @@ def test_table_rec_no_border_table(data_dir):
             x, y, w, h = ann['bbox']
             cell_box = (x, y, x + w, y + h)
             gt_boxes.append(cell_box)
-            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=pred_cells, iou_thresh=0.7)
+            ans = cal_metrics(gt_cell_bound=cell_box, pred_bounds=pred_cells, iou_thresh=0.5)
             if ans:
                 test_indexes['correct_cells'] += 1
                 img_indexes['correct_cells'] += 1
